@@ -17,39 +17,49 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      # 2. فك ضغط ملف المشروع وحذف ملف الـ JAR التالف فوراً
+      # 2. فك ضغط ملف المشروع وحذف ملف الـ JAR التالف
       - name: Unzip Project Files and Clean Wrapper
         run: |
           unzip my-apk.zip -d extracted_project
-          
-          # حذف ملف wrapper التالف نهائياً لتجنب توقف أدوات الحماية والتحقق
           find extracted_project -name "gradle-wrapper.jar" -exec rm -f {} \;
           echo "تم فك الضغط وحذف الـ wrapper التالف!"
 
-      # 3. إعداد بيئة جافا المتوافقة (Java JDK 17)
+      # 3. إعداد بيئة جافا (Java JDK 17)
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      # 4. تثبيت أداة Gradle نظيفة ومستقرة وتخطي فحص الملف التالف
+      # 4. تثبيت Node.js (مطلوب لتهيئة حزم Capacitor و node_modules)
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 5. تهيئة حزم الـ node_modules المطلوبة لبناء الأندرويد
+      - name: Install Capacitor Dependencies
+        run: |
+          # سنقوم بإنشاء مجلد node_modules وتثبيت حزم Capacitor فيه تلقائياً
+          cd extracted_project
+          npm init -y
+          npm install @capacitor/core @capacitor/android
+          # عمل مزامنة سريعة لضمان ربط المجلدات
+          npx cap sync android || true
+
+      # 6. تثبيت أداة Gradle نظيفة ومستقرة وتخطي فحص الملف التالف
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           validate-wrappers: false
 
-      # 5. بناء التطبيق وتوليد الـ APK مباشرة
+      # 7. بناء التطبيق وتوليد الـ APK مباشرة
       - name: Build APK with Global Gradle
         run: |
-          # تحديد مكان مجلد المشروع الذي يحتوي على ملف الإعدادات
-          PROJECT_DIR="extracted_project/my-apk"
-          cd "$PROJECT_DIR"
-          
-          # استخدام الـ Gradle المثبت عالمياً لبناء نسخة الـ Debug
+          cd extracted_project/my-apk
           gradle assembleDebug
 
-      # 6. استخراج ملف الـ APK الناتج ورفعه للتحميل
+      # 8. استخراج ملف الـ APK الناتج ورفعه للتحميل
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
