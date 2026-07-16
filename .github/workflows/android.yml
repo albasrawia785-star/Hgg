@@ -1,4 +1,4 @@
-name: Build Native Android APK
+name: Build Android APK from ZIP
 
 on:
   workflow_dispatch:
@@ -10,36 +10,71 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: my-apk
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
+          cache: gradle
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+      - name: Install unzip
+        run: sudo apt-get update && sudo apt-get install -y unzip
 
-      - name: Install npm dependencies
-        run: npm install
+      - name: Find ZIP file
+        id: zip
+        run: |
+          ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
-      - name: Sync Capacitor
-        run: npx cap sync android
+          if [ -z "$ZIP_FILE" ]; then
+            echo "❌ لم يتم العثور على أي ملف ZIP."
+            exit 1
+          fi
 
-      - name: Grant Gradle permission
-        run: chmod +x gradlew
+          echo "ZIP_FILE=$ZIP_FILE" >> $GITHUB_ENV
+          echo "Found: $ZIP_FILE"
+
+      - name: Extract ZIP
+        run: |
+          mkdir extracted
+          unzip -q "$ZIP_FILE" -d extracted
+
+      - name: Find Android Project
+        run: |
+          PROJECT_DIR=$(find extracted -name gradlew -exec dirname {} \; | head -n 1)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "❌ لم يتم العثور على مشروع Android."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          echo "Project: $PROJECT_DIR"
+
+      - name: Grant Gradle Permission
+        run: chmod +x "$PROJECT_DIR/gradlew"
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug
+        run: |
+          cd "$PROJECT_DIR"
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Find APK
+        run: |
+          APK=$(find "$PROJECT_DIR/app/build/outputs" -name "*.apk" | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "❌ لم يتم العثور على APK."
+            exit 1
+          fi
+
+          echo "APK_PATH=$APK" >> $GITHUB_ENV
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Native-APK
-          path: my-apk/app/build/outputs/apk/debug/app-debug.apk
+          name: Android-APK
+          path: ${{ env.APK_PATH }}
