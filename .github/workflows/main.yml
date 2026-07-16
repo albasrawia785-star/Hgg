@@ -45,15 +45,15 @@ jobs:
           npm install @capacitor/core @capacitor/android
           npx cap sync android || true
 
-      # 6. تثبيت إصدار Gradle 8.5 المتوافق تماماً وتخطي فحص الملف التالف
+      # 6. تثبيت إصدار Gradle 8.13 المتوافق تماماً وتخطي فحص الملف التالف
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.5' # تحديد الإصدار المتوافق لمنع تعارض الـ API
+          gradle-version: '8.13' # الإصدار المطلوب بدقة لحل المشكلة
           validate-wrappers: false
 
       # 7. بناء التطبيق وتوليد الـ APK مباشرة
-      - name: Build APK with Gradle 8.5
+      - name: Build APK with Gradle 8.13
         run: |
           cd extracted_project/my-apk
           gradle assembleDebug
