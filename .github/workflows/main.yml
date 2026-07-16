@@ -13,16 +13,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. جلب كود المستودع (بما فيه ملف الـ zip)
+      # 1. جلب كود المستودع
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      # 2. فك ضغط ملف my-apk.zip
+      # 2. فك ضغط الملف
       - name: Unzip Project Files
         run: |
           unzip my-apk.zip -d extracted_project
-          # استعراض الملفات للتأكد من فك الضغط بنجاح
-          ls -la extracted_project
+          echo "=== استعراض الملفات المستخرجة للتأكد من المسار ==="
+          find extracted_project -maxdepth 3 -not -path '*/.*'
 
       # 3. إعداد بيئة جافا (Java JDK 17)
       - name: Set up JDK 17
@@ -31,19 +31,31 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      # 4. إعطاء صلاحية التشغيل لملف gradlew داخل المجلد المستخرج
-      - name: Grant Execute Permission for Gradlew
-        run: chmod +x ./gradlew
-        working-directory: extracted_project
+      # 4. البحث عن مسار gradlew وإعطائه صلاحية التشغيل وبدء البناء تلقائياً
+      - name: Locate Gradlew and Build APK
+        run: |
+          # البحث عن ملف gradlew داخل المجلد المستخرج
+          GRADLEW_PATH=$(find extracted_project -name "gradlew" | head -n 1)
+          
+          if [ -z "$GRADLEW_PATH" ]; then
+            echo "خطأ: لم يتم العثور على ملف gradlew داخل الملف المضغوط المستخرج!"
+            exit 1
+          fi
+          
+          # تحديد المجلد الذي يحتوي على الملف والدخول إليه
+          PROJECT_DIR=$(dirname "$GRADLEW_PATH")
+          echo "تم العثور على المشروع في المسار: $PROJECT_DIR"
+          
+          # إعطاء صلاحيات التشغيل
+          chmod +x "$GRADLEW_PATH"
+          
+          # الانتقال لمجلد المشروع وبدء البناء
+          cd "$PROJECT_DIR"
+          ./gradlew assembleDebug
 
-      # 5. بناء نسخة الـ APK (Debug)
-      - name: Build with Gradle
-        run: ./gradlew assembleDebug
-        working-directory: extracted_project
-
-      # 6. استخراج ملف الـ APK ورفعه كناتج (Artifact) لتحميله
+      # 5. رفع ملف الـ APK الناتج كـ Artifact
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
-          path: extracted_project/app/build/outputs/apk/debug/app-debug.apk
+          path: 'extracted_project/**/build/outputs/apk/debug/*.apk'
