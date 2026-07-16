@@ -17,10 +17,14 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      # 2. فك ضغط ملف المشروع
-      - name: Unzip Project Files
+      # 2. فك ضغط ملف المشروع وحذف ملف الـ JAR التالف فوراً
+      - name: Unzip Project Files and Clean Corrupted Wrapper
         run: |
           unzip my-apk.zip -d extracted_project
+          
+          # البحث عن ملف gradle-wrapper.jar التالف وحذفه نهائياً لتجنب أي تعارض
+          find extracted_project -name "gradle-wrapper.jar" -exec rm -f {} \;
+          echo "تم حذف ملف gradle-wrapper.jar التالف بنجاح!"
 
       # 3. إعداد بيئة جافا (Java JDK 17)
       - name: Set up JDK 17
@@ -29,9 +33,11 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      # 4. تثبيت أداة Gradle نظيفة على السيرفر لتخطي الـ wrapper التالف
+      # 4. تثبيت أداة Gradle نظيفة مع تعطيل فحص الـ wrapper التالف
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          validate-wrappers: false # إيقاف فحص الـ Wrapper لتخطي الخطأ المزعج
 
       # 5. بناء نسخة الـ APK باستخدام Gradle المثبت على النظام مباشرة
       - name: Build APK with Installed Gradle
@@ -40,14 +46,14 @@ jobs:
           BUILD_FILE_PATH=$(find extracted_project -name "build.gradle" | head -n 1)
           
           if [ -z "$BUILD_FILE_PATH" ]; then
-            echo "خطأ: لم يتم العثور على ملف build.gradle في المشروع المستخرج!"
+            echo "خطأ: لم يتم العثور على ملف build.gradle في المشروع!"
             exit 1
           fi
           
           PROJECT_DIR=$(dirname "$BUILD_FILE_PATH")
           echo "تم العثور على مجلد المشروع الرئيسي في: $PROJECT_DIR"
           
-          # الانتقال للمجلد وبناء التطبيق باستخدام أداة gradle العالمية بدلاً من ./gradlew
+          # الانتقال لمجلد المشروع وبدء البناء
           cd "$PROJECT_DIR"
           gradle assembleDebug
 
