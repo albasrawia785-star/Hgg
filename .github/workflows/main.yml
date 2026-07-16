@@ -3,7 +3,7 @@ name: Build Android APK
 on:
   push:
     branches:
-      - main # أو استبدله بـ master إذا كان هذا اسم الفرع الرئيسي لديك
+      - main
   pull_request:
     branches:
       - main
@@ -17,28 +17,45 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      # 2. إعداد بيئة جافا (Java JDK 17) مع تحديد مسار الكاش الصحيح للمجلد الفرعي
+      # 2. خطوة استكشافية لمعرفة أسماء الملفات والمجلدات الحقيقية في مستودعك
+      - name: List Files in Repository
+        run: |
+          echo "=== الملفات الموجودة في المجلد الرئيسي ==="
+          ls -la
+          echo "=== بنية المجلدات كاملة ==="
+          find . -maxdepth 3 -not -path '*/.*'
+
+      # 3. إعداد بيئة جافا (بدون كاش لتجنب توقف السيرفر)
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
-          cache: 'gradle'
-          cache-dependency-path: 'my-apk/**/*.gradle*' # البحث عن ملفات الكاش داخل مجلد مشروعك
+          # تم إيقاف الكاش مؤقتاً لتخطي الخطأ والاستمرار في فحص الملفات
 
-      # 3. إعطاء صلاحية التشغيل لملف gradlew داخل مجلد my-apk
+      # 4. إعطاء صلاحية التشغيل لملف gradlew (سنحاول البحث عنه وتشغيله بمرونة)
       - name: Grant Execute Permission for Gradlew
-        run: chmod +x ./gradlew
-        working-directory: my-apk
+        run: |
+          # البحث عن ملف gradlew وإعطائه صلاحية التشغيل أينما كان
+          find . -name "gradlew" -exec chmod +x {} \;
 
-      # 4. بناء نسخة الـ APK (Debug) داخل مجلد my-apk
+      # 5. بناء نسخة الـ APK
+      # الكود أدناه سيبحث تلقائياً عن المجلد الذي يحتوي على gradlew ويبني منه مباشرة
       - name: Build with Gradle
-        run: ./gradlew assembleDebug
-        working-directory: my-apk
+        run: |
+          GRADLEW_PATH=$(find . -name "gradlew" | head -n 1)
+          if [ -z "$GRADLEW_PATH" ]; then
+            echo "خطأ: لم يتم العثور على ملف gradlew في المستودع!"
+            exit 1
+          fi
+          PROJECT_DIR=$(dirname "$GRADLEW_PATH")
+          echo "تم العثور على المشروع في: $PROJECT_DIR"
+          cd "$PROJECT_DIR"
+          ./gradlew assembleDebug
 
-      # 5. استخراج ملف الـ APK ورفعه كناتج (Artifact) لتتمكن من تحميله وتجربته
+      # 6. استخراج ملف الـ APK ورفعه كناتج (Artifact)
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
-          path: my-apk/app/build/outputs/apk/debug/app-debug.apk
+          path: '**/build/outputs/apk/debug/*.apk' # سيبحث عن ملف الـ APK أينما تم توليده
