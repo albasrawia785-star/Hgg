@@ -31,7 +31,7 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      # 4. تثبيت Node.js (مطلوب لتهيئة حزم Capacitor و node_modules)
+      # 4. تثبيت Node.js لتهيئة حزم Capacitor
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -40,21 +40,20 @@ jobs:
       # 5. تهيئة حزم الـ node_modules المطلوبة لبناء الأندرويد
       - name: Install Capacitor Dependencies
         run: |
-          # سنقوم بإنشاء مجلد node_modules وتثبيت حزم Capacitor فيه تلقائياً
           cd extracted_project
           npm init -y
           npm install @capacitor/core @capacitor/android
-          # عمل مزامنة سريعة لضمان ربط المجلدات
           npx cap sync android || true
 
-      # 6. تثبيت أداة Gradle نظيفة ومستقرة وتخطي فحص الملف التالف
+      # 6. تثبيت إصدار Gradle 8.5 المتوافق تماماً وتخطي فحص الملف التالف
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
+          gradle-version: '8.5' # تحديد الإصدار المتوافق لمنع تعارض الـ API
           validate-wrappers: false
 
       # 7. بناء التطبيق وتوليد الـ APK مباشرة
-      - name: Build APK with Global Gradle
+      - name: Build APK with Gradle 8.5
         run: |
           cd extracted_project/my-apk
           gradle assembleDebug
