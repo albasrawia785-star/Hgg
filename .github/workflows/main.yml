@@ -17,12 +17,10 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      # 2. فك ضغط الملف
+      # 2. فك ضغط ملف المشروع
       - name: Unzip Project Files
         run: |
           unzip my-apk.zip -d extracted_project
-          echo "=== استعراض الملفات المستخرجة للتأكد من المسار ==="
-          find extracted_project -maxdepth 3 -not -path '*/.*'
 
       # 3. إعداد بيئة جافا (Java JDK 17)
       - name: Set up JDK 17
@@ -31,29 +29,29 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      # 4. البحث عن مسار gradlew وإعطائه صلاحية التشغيل وبدء البناء تلقائياً
-      - name: Locate Gradlew and Build APK
+      # 4. تثبيت أداة Gradle نظيفة على السيرفر لتخطي الـ wrapper التالف
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # 5. بناء نسخة الـ APK باستخدام Gradle المثبت على النظام مباشرة
+      - name: Build APK with Installed Gradle
         run: |
-          # البحث عن ملف gradlew داخل المجلد المستخرج
-          GRADLEW_PATH=$(find extracted_project -name "gradlew" | head -n 1)
+          # البحث عن المجلد الذي يحتوي على ملف build.gradle
+          BUILD_FILE_PATH=$(find extracted_project -name "build.gradle" | head -n 1)
           
-          if [ -z "$GRADLEW_PATH" ]; then
-            echo "خطأ: لم يتم العثور على ملف gradlew داخل الملف المضغوط المستخرج!"
+          if [ -z "$BUILD_FILE_PATH" ]; then
+            echo "خطأ: لم يتم العثور على ملف build.gradle في المشروع المستخرج!"
             exit 1
           fi
           
-          # تحديد المجلد الذي يحتوي على الملف والدخول إليه
-          PROJECT_DIR=$(dirname "$GRADLEW_PATH")
-          echo "تم العثور على المشروع في المسار: $PROJECT_DIR"
+          PROJECT_DIR=$(dirname "$BUILD_FILE_PATH")
+          echo "تم العثور على مجلد المشروع الرئيسي في: $PROJECT_DIR"
           
-          # إعطاء صلاحيات التشغيل
-          chmod +x "$GRADLEW_PATH"
-          
-          # الانتقال لمجلد المشروع وبدء البناء
+          # الانتقال للمجلد وبناء التطبيق باستخدام أداة gradle العالمية بدلاً من ./gradlew
           cd "$PROJECT_DIR"
-          ./gradlew assembleDebug
+          gradle assembleDebug
 
-      # 5. رفع ملف الـ APK الناتج كـ Artifact
+      # 6. رفع ملف الـ APK الناتج لتحميله
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
