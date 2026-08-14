@@ -8,7 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     permissions:
       contents: write
 
@@ -28,25 +27,28 @@ jobs:
 
       # 3. فك ضغط المشروع واستخراج الملف المرفوع
       - name: Locate and Extract Project
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
           BUILD_ID="${{ github.event.client_payload.build_id }}"
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
-          echo "🔍 جاري البحث عن ملف المشروع برقم البناء: $BUILD_ID"
+          echo "🔍 جاري البحث عن ملف المشروع: $PROJECT_NAME (Build ID: $BUILD_ID)"
           
           ZIP_FILE=""
-          for i in {1..10}; do
+          for i in {1..12}; do
             ZIP_FILE=$(find . -maxdepth 2 -name "*${BUILD_ID}*.zip" | head -n 1)
             if [ -z "$ZIP_FILE" ]; then
               ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
             fi
-
             if [ -n "$ZIP_FILE" ]; then
-              echo "✅ تم العثور على الملف: $ZIP_FILE"
+              echo "✅ تم العثور على الملف محلياً: $ZIP_FILE"
               break
             fi
-            echo "⏳ محاولة ($i/10): انتظار ظهور الملف..."
-            sleep 3
+            echo "⏳ محاولة ($i/12): جلب الملف من مستودع GitHub..."
+            git pull --rebase || true
+            sleep 2
           done
 
           if [ -z "$ZIP_FILE" ]; then
@@ -63,36 +65,66 @@ jobs:
           SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
-
           gradle wrapper --gradle-version 9.3.1 --distribution-type bin || true
           chmod +x ./gradlew
-
           echo "android.suppressUnsupportedCompileSdk=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
           echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m" >> gradle.properties
         continue-on-error: true
 
-      # 4.5. استبدال وتطبيق أيقونة التطبيق المرفوعة تلقائياً
+      # 4.5. استبدال وتطبيق أيقونة التطبيق المرفوعة تلقائياً على كافة المقاسات وإزالة قيود Adaptive Icons
       - name: Replace Custom App Icon
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
           BUILD_ID="${{ github.event.client_payload.build_id }}"
-          # البحث عن ملف الأيقونة في الجذر برقم البناء أو أي ملف png مرفوع
+          echo "🎨 فحص وجود أيقونة مخصصة للبناء: $BUILD_ID"
+          
           ICON_FILE=$(find . -maxdepth 2 -name "*${BUILD_ID}*.png" | head -n 1)
           if [ -z "$ICON_FILE" ]; then
-            ICON_FILE=$(find . -maxdepth 1 -name "*.png" | head -n 1)
+            ICON_FILE=$(find . -maxdepth 2 -name "icon_*.png" | head -n 1)
           fi
 
-          if [ -n "$ICON_FILE" ]; then
-            echo "🎨 تم العثور على الأيقونة المخصصة: $ICON_FILE"
+          # إذا لم يتم العثور عليها محلياً، جلبها مباشرة من API
+          if [ -z "$ICON_FILE" ] || [ ! -s "$ICON_FILE" ]; then
+            echo "🔍 جلب الأيقونة عبر GitHub API..."
+            API_ICON_CONTENT=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/$REPO/contents/icon_${BUILD_ID}.png" | jq -r '.content // empty')
+            if [ -n "$API_ICON_CONTENT" ] && [ "$API_ICON_CONTENT" != "null" ]; then
+              echo "$API_ICON_CONTENT" | base64 -d > custom_app_icon.png
+              ICON_FILE="custom_app_icon.png"
+            fi
+          fi
+
+          if [ -n "$ICON_FILE" ] && [ -s "$ICON_FILE" ]; then
+            echo "✅ تم تجهيز ملف الأيقونة: $ICON_FILE"
             
-            # البحث عن جميع مسارات أيقونات التشغيل واستبدالها بالصورة الجديدة
-            find project_dir -type f \( -name "ic_launcher*.png" -o -name "ic_launcher*.webp" \) | while read -r target_icon; do
-              echo "🔄 استبدال: $target_icon"
-              cp -f "$ICON_FILE" "$target_icon"
+            # العثور على جميع مجلدات res في المشروع
+            find project_dir -type d -name "res" | while read -r res_dir; do
+              echo "📁 معالجة مجلد الموارد: $res_dir"
+
+              # 1. إنشاء مجلدات mipmap الأساسية وتوزيع الأيقونة عليها
+              for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+                mkdir -p "$res_dir/mipmap-$density"
+                cp -f "$ICON_FILE" "$res_dir/mipmap-$density/ic_launcher.png"
+                cp -f "$ICON_FILE" "$res_dir/mipmap-$density/ic_launcher_round.png"
+                cp -f "$ICON_FILE" "$res_dir/mipmap-$density/ic_launcher_foreground.png"
+              done
+
+              # 2. استبدال أي ملفات صور سابقة باسم launcher أو icon
+              find "$res_dir" -type f \( -name "*ic_launcher*.png" -o -name "*ic_launcher*.webp" -o -name "*icon*.png" -o -name "*icon*.webp" \) | while read -r old_img; do
+                cp -f "$ICON_FILE" "$old_img"
+              done
+
+              # 3. إزالة ملفات Adaptive Icons XML المتعارضة التي تحجب ظهور صورة PNG الجديدة على أجهزة أندرويد الحديثة
+              find "$res_dir" -type f -path "*/mipmap-anydpi*/*" -name "*.xml" -delete || true
+              find "$res_dir" -type f -path "*/drawable-anydpi*/*" -name "*.xml" -delete || true
+              find "$res_dir" -type f -name "ic_launcher_foreground.xml" -delete || true
             done
-            echo "✅ تم تطبيق الأيقونة على كافة مجلدات المشروع بنجاح!"
+
+            echo "🎉 تم تطبيق الأيقونة المخصصة بالكامل على جميع الواجهات بنجاح!"
           else
-            echo "ℹ️ لم يتم رفع أيقونة مخصصة، سيتم استخدام الأيقونة الافتراضية للمشروع."
+            echo "ℹ️ لم يتم العثور على أيقونة مخصصة، سيتم اعتماد أيقونة المشروع الأصلية."
           fi
         continue-on-error: true
 
@@ -104,42 +136,41 @@ jobs:
           SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
-
           keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Debug, O=Android, C=US" || true
           if [ -d "app" ]; then cp -f debug.keystore app/debug.keystore || true; fi
-
           chmod +x ./gradlew
           BUILD_TYPE="${{ github.event.client_payload.build_type }}"
           BUILD_ID="${{ github.event.client_payload.build_id }}"
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
-
+          
           if [ "$BUILD_TYPE" == "aab" ]; then
-            echo "🚀 بدء بناء حزمة AAB..."
+            echo "🚀 بدء بناء حزمة AAB لمشروع $PROJECT_NAME..."
             ./gradlew clean bundleRelease --no-daemon || ./gradlew clean bundleDebug --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.aab"
           else
-            echo "🚀 بدء بناء حزمة APK..."
+            echo "🚀 بدء بناء حزمة APK لمشروع $PROJECT_NAME..."
             ./gradlew clean assembleDebug --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/apk/debug/*.apk" -o -name "*debug*.apk" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.apk"
           fi
-
+          
           if [ -z "$OUT_FILE" ]; then
             echo "❌ فشل العثور على الملف الناتج!"
             exit 1
           fi
-
+          
           cp "$OUT_FILE" "$GITHUB_WORKSPACE/$FINAL_NAME"
           echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
 
-      # 6. نشر الملف الناتج في Release مستقل
+      # 6. نشر الملف الناتج في Release مستقل باسم المشروع
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "build-${{ github.event.client_payload.build_id }}"
-          name: "Build ${{ github.event.client_payload.build_id }}"
+          name: "${{ github.event.client_payload.project_name || 'Application' }}"
+          body: "🚀 تم تجميع وإصدار تطبيق **${{ github.event.client_payload.project_name || 'Application' }}** بنجاح (معرف البناء: ${{ github.event.client_payload.build_id }})"
           files: "${{ env.FINAL_ASSET }}"
           fail_on_unmatched_files: false
         env:
