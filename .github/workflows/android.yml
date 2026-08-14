@@ -65,7 +65,6 @@ jobs:
           PACKAGE_NAME="${{ github.event.client_payload.package_name }}"
           ENABLE_MINIFY="${{ github.event.client_payload.enable_minify }}"
           RAW_MIN_SDK="${{ github.event.client_payload.min_sdk }}"
-          RAW_TARGET_SDK="${{ github.event.client_payload.target_sdk }}"
           VERSION_CODE="${{ github.event.client_payload.version_code }}"
           VERSION_NAME="${{ github.event.client_payload.version_name }}"
 
@@ -88,7 +87,6 @@ jobs:
           }
 
           MIN_SDK=$(convert_sdk "$RAW_MIN_SDK")
-          TARGET_SDK=$(convert_sdk "$RAW_TARGET_SDK")
 
           # 1. تغيير اسم التطبيق على الهاتف
           if [ -n "$APP_NAME" ]; then
@@ -128,18 +126,7 @@ jobs:
             done
           fi
 
-          # 5. تعديل Target SDK
-          if [ -n "$TARGET_SDK" ]; then
-            echo "⚙️ تعيين Target SDK = $TARGET_SDK"
-            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
-              sed -i -E "s/(targetSdk(Version)?\s*=\s*)[0-9]+/\1$TARGET_SDK/g" "$g_file"
-              sed -i -E "s/(targetSdk(Version)?\s+)[0-9]+/\1$TARGET_SDK/g" "$g_file"
-              sed -i -E "s/(targetSdk\s*\(\s*)[0-9]+(\s*\))/\1$TARGET_SDK\2/g" "$g_file"
-              sed -i -E "s/(targetSdk\.set\s*\(\s*)[0-9]+(\s*\))/\1$TARGET_SDK\2/g" "$g_file"
-            done
-          fi
-
-          # 6. تعديل رقم الإصدار (versionCode)
+          # 5. تعديل رقم الإصدار (versionCode)
           if [ -n "$VERSION_CODE" ]; then
             echo "⚙️ تعيين versionCode = $VERSION_CODE"
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
@@ -149,7 +136,7 @@ jobs:
             done
           fi
 
-          # 7. تعديل اسم الإصدار (versionName)
+          # 6. تعديل اسم الإصدار (versionName)
           if [ -n "$VERSION_NAME" ]; then
             echo "⚙️ تعيين versionName = $VERSION_NAME"
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
