@@ -21,7 +21,7 @@ jobs:
 
       # 2. إعداد بيئة جافا (JDK 17)
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'zulu'
@@ -242,11 +242,6 @@ jobs:
                 -H "Authorization: token $GH_TOKEN" \
                 -H "Accept: application/vnd.github.v3+json" \
                 -d "{\"message\": \"Auto-clean: delete $file\", \"sha\": \"$SHA\"}" \
-                "https://api.github.com/repos/$REPO/contents/$file" > /dev/null
-              echo "✅ تم حذف $file"
-            fi
-          done
-\", \"sha\": \"$SHA\"}" \
                 "https://api.github.com/repos/$REPO/contents/$file" > /dev/null
               echo "✅ تم حذف $file"
             fi
