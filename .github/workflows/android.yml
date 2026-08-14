@@ -26,7 +26,7 @@ jobs:
           java-version: '17'
           distribution: 'zulu'
 
-      # 3. فك ضغط المشروع واستخراج الملف المرفوع
+      # 3. فك ضغط المشروع
       - name: Locate and Extract Project
         run: |
           BUILD_ID="${{ github.event.client_payload.build_id }}"
@@ -55,28 +55,28 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      # 4. الإصلاح الجذري الشامل لـ Compose Compiler ومشاكل Gradle
+      # 4. الإصلاح الدقيق والشامل لـ Compose و Gradle بدون أخطاء Plugins
       - name: Fix Compose & Gradle Compatibility
         run: |
           cd project_dir
 
-          # إزالة إعدادات Compose القديمة المتعارضة
+          # 1. مسح إعدادات Compose القديمة المتعارضة
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i '/kotlinCompilerExtensionVersion/d' {} +
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i '/androidx.compose.compiler:compiler/d' {} +
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i '/suppressKotlinVersionCompatibilityCheck/d' {} +
 
-          # تفعيل إضافة Compose الرسمية المتوافقة مع Kotlin الحديثة
-          find . -type f -name "build.gradle.kts" -path "*/app/*" -exec sed -i '1s/^/plugins { id("org.jetbrains.kotlin.plugin.compose") }\n/' {} +
-          find . -type f -name "build.gradle" -path "*/app/*" -not -name "*.kts" -exec sed -i '1s/^/plugins { id "org.jetbrains.kotlin.plugin.compose" }\n/' {} +
+          # 2. تطبيق إضافة Compose الحديثة بالصيغة الآمنة في نهاية الملف لتفادي خطأ Multiple plugins
+          find . -type f -name "build.gradle.kts" -path "*/app/*" -exec sh -c 'echo "\napply(plugin = \"org.jetbrains.kotlin.plugin.compose\")" >> "$1"' _ {} \;
+          find . -type f -name "build.gradle" -path "*/app/*" -not -name "*.kts" -exec sh -c 'echo "\napply plugin: \"org.jetbrains.kotlin.plugin.compose\"" >> "$1"' _ {} \;
 
-          # إعدادات الاستقرار ومنع تعارضات الذاكرة
+          # 3. إعدادات الاستقرار والتوافق
           echo "android.suppressUnsupportedCompileSdk=true" >> gradle.properties
           echo "kotlin.mpp.stability.nowarn=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
           echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m" >> gradle.properties
         continue-on-error: true
 
-      # 5. بناء التطبيق والتوقيع المؤقت (APK / AAB)
+      # 5. بناء التطبيق والتوقيع
       - name: Execute Gradle Build
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
@@ -112,7 +112,7 @@ jobs:
           cp "$OUT_FILE" "$GITHUB_WORKSPACE/$FINAL_NAME"
           echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
 
-      # 6. نشر التطبيق في Release جديد محدد برقم البناء
+      # 6. رفع الملف إلى Releases برقم البناء الدقيق
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -123,7 +123,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 7. الحذف الذكي عبر GitHub REST API (بدون تعارض وبدون حظر)
+      # 7. الحذف الذكي والنظيف عبر API بدون تعارضات
       - name: Smart API Cleanup
         if: always()
         env:
@@ -131,11 +131,8 @@ jobs:
           REPO: ${{ github.repository }}
           BUILD_ID: ${{ github.event.client_payload.build_id }}
         run: |
-          echo "🧹 جاري حذف الملفات المرفوعة عبر API النظيف..."
-          
-          # استخراج وحذف ملفات الـ ZIP التابعة للبناء الحالي
+          echo "🧹 جاري تنظيف الملفات المرفوعة..."
           for file in $(find . -maxdepth 1 -name "*${BUILD_ID}*.zip" -o -name "*${BUILD_ID}*.png" | sed 's|^\./||'); do
-            echo "🗑️ جاري حذف: $file"
             SHA=$(curl -s -H "Authorization: token $GH_TOKEN" \
               "https://api.github.com/repos/$REPO/contents/$file" | jq -r '.sha')
             
@@ -145,6 +142,6 @@ jobs:
                 -H "Accept: application/vnd.github.v3+json" \
                 -d "{\"message\": \"Auto-clean: delete $file\", \"sha\": \"$SHA\"}" \
                 "https://api.github.com/repos/$REPO/contents/$file" > /dev/null
-              echo "✅ تم حذف $file بنجاح."
+              echo "✅ تم حذف $file"
             fi
           done
