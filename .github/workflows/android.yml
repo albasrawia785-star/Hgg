@@ -57,17 +57,39 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      # 4. تطبيق التخصيصات الاختيارية (اسم التطبيق، الإصدارات، ونطاق SDK مع الإغلاق البرمجي للأجهزة الأحدث)
+      # 4. تطبيق التخصيصات والتحويل التلقائي لـ API Level لمنع التثبيت
       - name: Customize App Configurations
         run: |
           APP_NAME="${{ github.event.client_payload.app_name }}"
-          MIN_SDK="${{ github.event.client_payload.min_sdk }}"
-          MAX_SDK="${{ github.event.client_payload.max_sdk }}"
-          TARGET_SDK="${{ github.event.client_payload.target_sdk }}"
+          RAW_MIN_SDK="${{ github.event.client_payload.min_sdk }}"
+          RAW_MAX_SDK="${{ github.event.client_payload.max_sdk }}"
+          RAW_TARGET_SDK="${{ github.event.client_payload.target_sdk }}"
           VERSION_CODE="${{ github.event.client_payload.version_code }}"
           VERSION_NAME="${{ github.event.client_payload.version_name }}"
 
-          # 1. تغيير اسم التطبيق الفعلي على شاشة الهاتف داخل strings.xml
+          # دالة تحويل رقم إصدار الأندرويد العادي إلى API Level
+          convert_sdk() {
+            case "$1" in
+              "7") echo "24" ;;
+              "8") echo "26" ;;
+              "9") echo "28" ;;
+              "10") echo "29" ;;
+              "11") echo "30" ;;
+              "12") echo "31" ;;
+              "13") echo "33" ;;
+              "14") echo "34" ;;
+              "15") echo "35" ;;
+              "16") echo "36" ;;
+              "17") echo "37" ;;
+              *) echo "$1" ;;
+            esac
+          }
+
+          MIN_SDK=$(convert_sdk "$RAW_MIN_SDK")
+          MAX_SDK=$(convert_sdk "$RAW_MAX_SDK")
+          TARGET_SDK=$(convert_sdk "$RAW_TARGET_SDK")
+
+          # 1. تغيير اسم التطبيق الظاهر على الهاتف
           if [ -n "$APP_NAME" ]; then
             echo "📝 تغيير اسم التطبيق على الهاتف إلى: $APP_NAME"
             find project_dir -type f -name "strings.xml" | while read -r str_file; do
@@ -75,36 +97,36 @@ jobs:
             done
           fi
 
-          # 2. تعديل الحد الأدنى لنظام التشغيل (minSdk) لمنع التثبيت على الإصدارات الأقدم
+          # 2. تعديل minSdk لمنع التثبيت على الأجهزة الأقدم مباشرة من مثبت الحزم
           if [ -n "$MIN_SDK" ]; then
-            echo "⚙️ تعيين الحد الأدنى minSdk = $MIN_SDK"
-            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/minSdk(Version)?(\s*=?\s*)[0-9]+/minSdk\2$MIN_SDK/g" {} +
-          fi
-
-          # 3. إغلاق التطبيق برمجياً إذا تم فتحه على نظام أعلى من maxSdk
-          if [ -n "$MAX_SDK" ]; then
-            echo "⚙️ تفعيل القفل البرمجي للحد الأقصى maxSdk = $MAX_SDK"
-            find project_dir -type f \( -name "MainActivity.kt" -o -name "MainActivity.java" \) | while read -r main_file; do
-              sed -i "/super.onCreate/a \        if (android.os.Build.VERSION.SDK_INT > $MAX_SDK) { android.widget.Toast.makeText(this, \"هذا التطبيق غير مدعوم على إصدار نظامك\", android.widget.Toast.LENGTH_LONG).show(); finish(); return; }" "$main_file"
+            echo "⚙️ تعيين الحد الأدنى للتثبيت minSdk = $MIN_SDK"
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
+              sed -i -E "s/minSdk(Version)?(\s*=?\s*)[0-9]+/minSdk\2$MIN_SDK/g" "$g_file"
             done
           fi
 
-          # 4. تعديل Target SDK إن تم تحديده
+          # 3. تعديل Target SDK إن تم تحديده
           if [ -n "$TARGET_SDK" ]; then
             echo "⚙️ تعيين Target SDK = $TARGET_SDK"
-            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/targetSdk(Version)?(\s*=?\s*)[0-9]+/targetSdk\2$TARGET_SDK/g" {} +
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
+              sed -i -E "s/targetSdk(Version)?(\s*=?\s*)[0-9]+/targetSdk\2$TARGET_SDK/g" "$g_file"
+            done
           fi
 
-          # 5. تعديل رقم الإصدار (versionCode)
+          # 4. تعديل رقم الإصدار (versionCode)
           if [ -n "$VERSION_CODE" ]; then
             echo "⚙️ تعيين versionCode = $VERSION_CODE"
-            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/versionCode(\s*=?\s*)[0-9]+/versionCode\1$VERSION_CODE/g" {} +
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
+              sed -i -E "s/versionCode(\s*=?\s*)[0-9]+/versionCode\1$VERSION_CODE/g" "$g_file"
+            done
           fi
 
-          # 6. تعديل اسم الإصدار (versionName)
+          # 5. تعديل اسم الإصدار (versionName)
           if [ -n "$VERSION_NAME" ]; then
             echo "⚙️ تعيين versionName = $VERSION_NAME"
-            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/versionName(\s*=?\s*)\"[^\"]+\"/versionName\1\"$VERSION_NAME\"/g" {} +
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
+              sed -i -E "s/versionName(\s*=?\s*)\"[^\"]+\"/versionName\1\"$VERSION_NAME\"/g" "$g_file"
+            done
           fi
         continue-on-error: true
 
@@ -134,11 +156,7 @@ jobs:
 
           if [ -n "$ICON_FILE" ]; then
             echo "🎨 تم العثور على الأيقونة المخصصة: $ICON_FILE"
-            
-            # حذف مجلدات anydpi-v26 لمنع تعارض ملفات XML مع صور PNG
             find project_dir -type d -name "*anydpi*" -exec rm -rf {} +
-            
-            # استبدال وتوحيد الأيقونات في كافة مجلدات mipmap و drawable
             find project_dir -type d \( -name "mipmap-*" -o -name "drawable-*" \) | while read -r res_dir; do
               rm -f "$res_dir"/ic_launcher*.xml
               rm -f "$res_dir"/ic_launcher*.webp
@@ -206,7 +224,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 7. الحذف الذكي والنظيف عبر API بدون تعارضات وبدون حظر
+      # 7. الحذف الذكي والنظيف عبر API بدون تعارضات
       - name: Smart API Cleanup
         if: always()
         env:
@@ -224,6 +242,11 @@ jobs:
                 -H "Authorization: token $GH_TOKEN" \
                 -H "Accept: application/vnd.github.v3+json" \
                 -d "{\"message\": \"Auto-clean: delete $file\", \"sha\": \"$SHA\"}" \
+                "https://api.github.com/repos/$REPO/contents/$file" > /dev/null
+              echo "✅ تم حذف $file"
+            fi
+          done
+\", \"sha\": \"$SHA\"}" \
                 "https://api.github.com/repos/$REPO/contents/$file" > /dev/null
               echo "✅ تم حذف $file"
             fi
