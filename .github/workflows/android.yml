@@ -57,7 +57,62 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      # 4. تثبيت Gradle 9.3.1 المتوافق
+      # 4. تطبيق التخصيصات الاختيارية (اسم التطبيق، الإصدارات، ونطاق SDK)
+      - name: Customize App Configurations
+        run: |
+          APP_NAME="${{ github.event.client_payload.app_name }}"
+          MIN_SDK="${{ github.event.client_payload.min_sdk }}"
+          MAX_SDK="${{ github.event.client_payload.max_sdk }}"
+          TARGET_SDK="${{ github.event.client_payload.target_sdk }}"
+          VERSION_CODE="${{ github.event.client_payload.version_code }}"
+          VERSION_NAME="${{ github.event.client_payload.version_name }}"
+
+          # 1. تغيير اسم التطبيق الفعلي على شاشة الهاتف داخل strings.xml
+          if [ -n "$APP_NAME" ]; then
+            echo "📝 تغيير اسم التطبيق على الهاتف إلى: $APP_NAME"
+            find project_dir -type f -name "strings.xml" | while read -r str_file; do
+              sed -i "s|<string name=\"app_name\">.*</string>|<string name=\"app_name\">$APP_NAME</string>|g" "$str_file"
+            done
+          fi
+
+          # 2. تعديل الحد الأدنى لنظام التشغيل (minSdk)
+          if [ -n "$MIN_SDK" ]; then
+            echo "⚙️ تعيين الحد الأدنى minSdk = $MIN_SDK"
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/minSdk(Version)?(\s*=?\s*)[0-9]+/minSdk\2$MIN_SDK/g" {} +
+          fi
+
+          # 3. تعديل الحد الأقصى لنظام التشغيل (maxSdkVersion) في AndroidManifest.xml
+          if [ -n "$MAX_SDK" ]; then
+            echo "⚙️ تعيين الحد الأقصى maxSdkVersion = $MAX_SDK"
+            find project_dir -type f -name "AndroidManifest.xml" | while read -r manifest_file; do
+              if grep -q "<uses-sdk" "$manifest_file"; then
+                sed -i -E "s/android:maxSdkVersion=\"[0-9]+\"/android:maxSdkVersion=\"$MAX_SDK\"/g" "$manifest_file"
+              else
+                sed -i "s|<manifest|<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">\n    <uses-sdk android:maxSdkVersion=\"$MAX_SDK\" />|g" "$manifest_file"
+              fi
+            done
+          fi
+
+          # 4. تعديل Target SDK إن تم تحديده
+          if [ -n "$TARGET_SDK" ]; then
+            echo "⚙️ تعيين Target SDK = $TARGET_SDK"
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/targetSdk(Version)?(\s*=?\s*)[0-9]+/targetSdk\2$TARGET_SDK/g" {} +
+          fi
+
+          # 5. تعديل رقم الإصدار (versionCode)
+          if [ -n "$VERSION_CODE" ]; then
+            echo "⚙️ تعيين versionCode = $VERSION_CODE"
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/versionCode(\s*=?\s*)[0-9]+/versionCode\1$VERSION_CODE/g" {} +
+          fi
+
+          # 6. تعديل اسم الإصدار (versionName)
+          if [ -n "$VERSION_NAME" ]; then
+            echo "⚙️ تعيين versionName = $VERSION_NAME"
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/versionName(\s*=?\s*)\"[^\"]+\"/versionName\1\"$VERSION_NAME\"/g" {} +
+          fi
+        continue-on-error: true
+
+      # 4.5. تثبيت Gradle 9.3.1 المتوافق
       - name: Setup Gradle 9.3.1
         run: |
           SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
@@ -72,7 +127,7 @@ jobs:
           echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m" >> gradle.properties
         continue-on-error: true
 
-      # 4.5. استبدال الأيقونة الجذري لمنع أخطاء XML و AnyDPI
+      # 4.6. استبدال الأيقونة الجذري لمنع أخطاء XML و AnyDPI
       - name: Replace Custom App Icon Cleanly
         run: |
           BUILD_ID="${{ github.event.client_payload.build_id }}"
@@ -89,12 +144,10 @@ jobs:
             
             # استبدال وتوحيد الأيقونات في كافة مجلدات mipmap و drawable
             find project_dir -type d \( -name "mipmap-*" -o -name "drawable-*" \) | while read -r res_dir; do
-              # حذف أي نسخ قديمة بصيغ مختلفة
               rm -f "$res_dir"/ic_launcher*.xml
               rm -f "$res_dir"/ic_launcher*.webp
               rm -f "$res_dir"/ic_launcher*.png
               
-              # نسخ الأيقونة الجديدة
               cp -f "$ICON_FILE" "$res_dir/ic_launcher.png"
               cp -f "$ICON_FILE" "$res_dir/ic_launcher_round.png"
               cp -f "$ICON_FILE" "$res_dir/ic_launcher_foreground.png"
@@ -142,6 +195,9 @@ jobs:
 
           cp "$OUT_FILE" "$GITHUB_WORKSPACE/$FINAL_NAME"
           echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
+
+          echo "🔑 استخراج بصمة SHA-1..."
+          ./gradlew signingReport --no-daemon | grep -E "Variant: debug|SHA1:" || true
 
       # 6. نشر الملف الناتج في Release مستقل
       - name: Create Release
