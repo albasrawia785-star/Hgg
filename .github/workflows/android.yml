@@ -57,7 +57,7 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      # 4. تطبيق التخصيصات (Package Name، الحماية والتقليص R8، الاسم والإصدارات)
+      # 4. تطبيق التخصيصات (Package Name، الحماية R8، والاسم والإصدارات)
       - name: Customize App Configurations
         run: |
           APP_NAME="${{ github.event.client_payload.app_name }}"
@@ -89,13 +89,13 @@ jobs:
           MIN_SDK=$(convert_sdk "$RAW_MIN_SDK")
           TARGET_SDK=$(convert_sdk "$RAW_TARGET_SDK")
 
-          # 1. تغيير اسم التطبيق على الهاتف داخل strings.xml
+          # 1. تغيير اسم التطبيق على الهاتف
           if [ -n "$APP_NAME" ]; then
             echo "📝 تغيير اسم التطبيق على الهاتف إلى: $APP_NAME"
             find project_dir -type f -name "strings.xml" -exec sed -i "s|<string name=\"app_name\">.*</string>|<string name=\"app_name\">$APP_NAME</string>|g" {} +
           fi
 
-          # 2. تغيير معرف الحزمة (Package Name / ApplicationId)
+          # 2. تغيير معرّف الحزمة ApplicationId
           if [ -n "$PACKAGE_NAME" ]; then
             echo "📦 تغيير معرّف الحزمة ApplicationId إلى: $PACKAGE_NAME"
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
