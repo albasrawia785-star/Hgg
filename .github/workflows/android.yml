@@ -57,7 +57,7 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      # 4. تطبيق التخصيصات والتحويل التلقائي لـ API Level لمنع التثبيت
+      # 4. تطبيق التخصيصات والتحويل التلقائي لـ API Level
       - name: Customize App Configurations
         run: |
           APP_NAME="${{ github.event.client_payload.app_name }}"
@@ -93,11 +93,10 @@ jobs:
             find project_dir -type f -name "strings.xml" -exec sed -i "s|<string name=\"app_name\">.*</string>|<string name=\"app_name\">$APP_NAME</string>|g" {} +
           fi
 
-          # 2. تعديل minSdk و compileSdk لضمان عدم تعارض البناء
+          # 2. تعديل minSdk في ملفات build.gradle و build.gradle.kts
           if [ -n "$MIN_SDK" ]; then
             echo "⚙️ تعيين الحد الأدنى للتثبيت minSdk = $MIN_SDK"
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
-              # استبدال minSdk بكافة الأشكال (minSdk = 24 أو minSdk 24 أو minSdkVersion 24 أو minSdk.set(24))
               sed -i -E "s/(minSdk(Version)?\s*=\s*)[0-9]+/\1$MIN_SDK/g" "$g_file"
               sed -i -E "s/(minSdk(Version)?\s+)[0-9]+/\1$MIN_SDK/g" "$g_file"
               sed -i -E "s/(minSdk\s*\(\s*)[0-9]+(\s*\))/\1$MIN_SDK\2/g" "$g_file"
@@ -232,6 +231,28 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 7. الحذف الذكي والنظيف عبر API بدون تعارضات
+      - name: Smart API Cleanup
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BUILD_ID: ${{ github.event.client_payload.build_id }}
+        run: |
+          echo "🧹 جاري تنظيف الملفات المرفوعة عبر API..."
+          for file in $(find . -maxdepth 1 -name "*${BUILD_ID}*.zip" -o -name "*${BUILD_ID}*.png" | sed 's|^\./||'); do
+            SHA=$(curl -s -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/$REPO/contents/$file" | jq -r '.sha')
+            
+            if [ "$SHA" != "null" ] && [ -n "$SHA" ]; then
+              curl -s -X DELETE \
+                -H "Authorization: token $GH_TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                -d "{\"message\": \"Auto-clean: delete $file\", \"sha\": \"$SHA\"}" \
+                "https://api.github.com/repos/$REPO/contents/$file" > /dev/null
+              echo "✅ تم حذف $file"
+            fi
+          done
+ون تعارضات
       - name: Smart API Cleanup
         if: always()
         env:
