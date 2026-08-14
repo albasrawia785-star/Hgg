@@ -18,6 +18,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           sslVerify: false
+          fetch-depth: 0
 
       # 2. إعداد بيئة جافا (JDK 17)
       - name: Set up JDK 17
@@ -253,25 +254,26 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 7. الحذف الذكي والنظيف عبر API بدون تعارضات
-      - name: Smart API Cleanup
+      # 7. الحذف التلقائي الأكيد عبر Git Push
+      - name: Git Auto Cleanup
         if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          BUILD_ID: ${{ github.event.client_payload.build_id }}
         run: |
-          echo "🧹 جاري تنظيف الملفات المرفوعة عبر API..."
-          for file in $(find . -maxdepth 1 -name "*${BUILD_ID}*.zip" -o -name "*${BUILD_ID}*.png" | sed 's|^\./||'); do
-            SHA=$(curl -s -H "Authorization: token $GH_TOKEN" \
-              "https://api.github.com/repos/$REPO/contents/$file" | jq -r '.sha')
-            
-            if [ "$SHA" != "null" ] && [ -n "$SHA" ]; then
-              curl -s -X DELETE \
-                -H "Authorization: token $GH_TOKEN" \
-                -H "Accept: application/vnd.github.v3+json" \
-                -d "{\"message\": \"Auto-clean: delete $file\", \"sha\": \"$SHA\"}" \
-                "https://api.github.com/repos/$REPO/contents/$file" > /dev/null
-              echo "✅ تم حذف $file"
-            fi
-          done
+          echo "🧹 جاري تنظيف وحذف الملفات المرفوعة..."
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git pull origin main || git pull origin master || true
+          
+          BUILD_ID="${{ github.event.client_payload.build_id }}"
+          if [ -n "$BUILD_ID" ]; then
+            git rm -f *"${BUILD_ID}"*.zip *"${BUILD_ID}"*.png 2>/dev/null || true
+          fi
+          git rm -f z_*.zip icon_*.png *.zip *.png 2>/dev/null || true
+          
+          if ! git diff --cached --quiet; then
+            git commit -m "Auto-clean: remove build artifacts [skip ci]"
+            git push origin HEAD
+            echo "✅ تم حذف وتنظيف الملفات من المستودع بنجاح!"
+          else
+            echo "ℹ️ لا توجد ملفات لحذفها."
+          fi
