@@ -1,9 +1,11 @@
-name: Universal Bulletproof Android Builder
+name: Universal Android Builder
 
 on:
   repository_dispatch:
     types: [build_apk, build_aab, build_app, build]
   workflow_dispatch:
+  push:
+    branches: [ "main" ]
 
 jobs:
   build:
@@ -13,106 +15,106 @@ jobs:
       contents: write
 
     steps:
-      # 1. سحب كود المستودع
+      # 1. سحب الكود من المستودع
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          sslVerify: false
 
       # 2. إعداد بيئة جافا (JDK 17)
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'zulu'
 
-      # 3. العثور على ملف المشروع المضغوط وفك ضغطه
-      - name: Locate and Extract Project
+      # 3. فك ضغط ملف المشروع المرفوع
+      - name: Unzip project files
         run: |
           BUILD_ID="${{ github.event.client_payload.build_id }}"
-          echo "🔍 جاري البحث عن ملف المشروع برقم البناء: $BUILD_ID"
+          echo "🔍 جاري البحث عن ملف المشروع المضغوط..."
           
-          ZIP_FILE=""
-          for i in {1..10}; do
-            ZIP_FILE=$(find . -maxdepth 2 -name "*${BUILD_ID}*.zip" | head -n 1)
-            if [ -z "$ZIP_FILE" ]; then
-              ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
-            fi
-
-            if [ -n "$ZIP_FILE" ]; then
-              echo "✅ تم العثور على الملف: $ZIP_FILE"
-              break
-            fi
-            echo "⏳ محاولة ($i/10): انتظار ظهور الملف..."
-            sleep 3
-          done
+          ZIP_FILE=$(find . -maxdepth 2 -name "*${BUILD_ID}*.zip" | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then
+            ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+          fi
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "❌ خطأ: لم يتم العثور على ملف المشروع المضغوط!"
+            echo "❌ خطأ: لم يتم العثور على أي ملف zip داخل المستودع!"
             exit 1
           fi
 
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      # 4. تثبيت Gradle Wrapper 8.7 المستقر وإعدادات التوافق
-      - name: Setup Stable Gradle & Compatibility
-        run: |
-          SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
-          ROOT_DIR=$(dirname "$SETTINGS_FILE")
-          cd "$ROOT_DIR"
-
-          # فرض إصدار Gradle 8.7 المتوافق رسمياً مع Compose و AGP
-          gradle wrapper --gradle-version 8.7 --distribution-type bin || true
-          chmod +x ./gradlew
-
-          # حقن إعدادات منع أخطاء K2 وتوافق الذاكرة
-          echo "kotlin.experimental.tryK2=false" >> gradle.properties
-          echo "android.suppressUnsupportedCompileSdk=true" >> gradle.properties
-          echo "android.useAndroidX=true" >> gradle.properties
-          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m" >> gradle.properties
-        continue-on-error: true
-
-      # 5. تنفيذ البناء عبر ./gradlew المتوافق
-      - name: Execute Gradle Build
+      # 4. بناء التطبيق بنفس الطريقة المستقرة الأصلية
+      - name: Build App & Generate Package
         env:
-          _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
+          _JAVA_OPTIONS: "-Djava.awt.headless=true -Xmx4g"
+          GRADLE_OPTS: "-Djava.awt.headless=true -Dorg.gradle.jvmargs=-Xmx4096m"
         run: |
-          SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
-          ROOT_DIR=$(dirname "$SETTINGS_FILE")
-          cd "$ROOT_DIR"
+          TARGET_DIR=$(find project_dir \( -name "settings.gradle.kts" -o -name "settings.gradle" \) -exec dirname {} \; | head -n 1)
+          if [ -z "$TARGET_DIR" ]; then
+            TARGET_DIR=$(find project_dir -name "build.gradle*" -exec dirname {} \; | head -n 1)
+          fi
+          
+          if [ -z "$TARGET_DIR" ]; then
+            echo "❌ خطأ: لم يتم العثور على ملفات مشروع أندرويد!"
+            exit 1
+          fi
 
-          # إنشاء مفتاح توقيع مؤقت
-          keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Debug, O=Android, C=US" || true
+          cd "$TARGET_DIR"
+
+          echo "🛠️ 1. تجهيز الـ Gradle Wrapper وتصاريح التشغيل..."
+          gradle wrapper || true
+          chmod +x gradlew
+
+          echo "🔑 2. إنشاء ملف debug.keystore المطلوب للتوثيق..."
+          keytool -genkey -v -keystore debug.keystore \
+            -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass "android" \
+            -keypass "android" \
+            -dname "CN=Android Debug, O=Android, C=US" || true
+          
           if [ -d "app" ]; then cp -f debug.keystore app/debug.keystore || true; fi
 
-          chmod +x ./gradlew
+          echo "🔍 3. التحقق من ملف google-services.json..."
+          if [ ! -f "app/google-services.json" ]; then
+            echo "⚠️ تنبيه: ملف google-services.json غير موجود داخل app/."
+          fi
+
           BUILD_TYPE="${{ github.event.client_payload.build_type }}"
           BUILD_ID="${{ github.event.client_payload.build_id }}"
+          if [ -z "$BUILD_ID" ]; then BUILD_ID="latest"; fi
 
           if [ "$BUILD_TYPE" == "aab" ]; then
-            echo "🚀 بدء بناء حزمة AAB عبر Gradle 8.7..."
+            echo "🚀 4. تنفيذ بناء حزمة AAB..."
             ./gradlew clean bundleRelease --no-daemon || ./gradlew clean bundleDebug --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
             FINAL_NAME="app-release-${BUILD_ID}.aab"
           else
-            echo "🚀 بدء بناء حزمة APK عبر Gradle 8.7..."
+            echo "🚀 4. تنفيذ بناء نسخة Debug APK..."
             ./gradlew clean assembleDebug --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/apk/debug/*.apk" -o -name "*debug*.apk" | head -n 1)
             FINAL_NAME="app-debug-${BUILD_ID}.apk"
           fi
 
           if [ -z "$OUT_FILE" ]; then
-            echo "❌ فشل العثور على الملف الناتج!"
+            echo "❌ فشل العثور على ملف التطبيق الناتج!"
             exit 1
           fi
 
           cp "$OUT_FILE" "$GITHUB_WORKSPACE/$FINAL_NAME"
           echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
+          echo "FINAL_FILENAME=$FINAL_NAME" >> $GITHUB_ENV
 
-      # 6. نشر التطبيق في Release مستقل
-      - name: Create Release
+          echo "🔑 5. استخراج بصمة SHA-1..."
+          ./gradlew signingReport --no-daemon | grep -E "Variant: debug|SHA1:" || true
+          echo "✅ تم البناء بنجاح!"
+
+      # 5. نشر الملف في Releases لتسهيل التنزيل المباشر من موقعك
+      - name: Publish Release for Web Download
         uses: softprops/action-gh-release@v2
+        if: github.event_name == 'repository_dispatch'
         with:
           tag_name: "build-${{ github.event.client_payload.build_id }}"
           name: "Build ${{ github.event.client_payload.build_id }}"
@@ -121,25 +123,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 7. التنظيف الذكي عبر API بدون تعارضات وبدون حظر
-      - name: Smart API Cleanup
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          BUILD_ID: ${{ github.event.client_payload.build_id }}
-        run: |
-          echo "🧹 جاري مسح الملف المرفوع عبر API..."
-          for file in $(find . -maxdepth 1 -name "*${BUILD_ID}*.zip" -o -name "*${BUILD_ID}*.png" | sed 's|^\./||'); do
-            SHA=$(curl -s -H "Authorization: token $GH_TOKEN" \
-              "https://api.github.com/repos/$REPO/contents/$file" | jq -r '.sha')
-            
-            if [ "$SHA" != "null" ] && [ -n "$SHA" ]; then
-              curl -s -X DELETE \
-                -H "Authorization: token $GH_TOKEN" \
-                -H "Accept: application/vnd.github.v3+json" \
-                -d "{\"message\": \"Auto-clean: delete $file\", \"sha\": \"$SHA\"}" \
-                "https://api.github.com/repos/$REPO/contents/$file" > /dev/null
-              echo "✅ تم حذف $file"
-            fi
-          done
+      # 6. حفظ نسخة احتياطية في Artifacts (مثل سكريبتك القديم تماماً)
+      - name: Upload Build Artifact Backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FINAL_FILENAME }}
+          path: ${{ env.FINAL_ASSET }}
