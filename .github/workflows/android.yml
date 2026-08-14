@@ -57,7 +57,7 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      # 4. تطبيق التخصيصات الاختيارية (اسم التطبيق، الإصدارات، ونطاق SDK)
+      # 4. تطبيق التخصيصات الاختيارية (اسم التطبيق، الإصدارات، ونطاق SDK مع الإغلاق البرمجي للأجهزة الأحدث)
       - name: Customize App Configurations
         run: |
           APP_NAME="${{ github.event.client_payload.app_name }}"
@@ -75,21 +75,17 @@ jobs:
             done
           fi
 
-          # 2. تعديل الحد الأدنى لنظام التشغيل (minSdk)
+          # 2. تعديل الحد الأدنى لنظام التشغيل (minSdk) لمنع التثبيت على الإصدارات الأقدم
           if [ -n "$MIN_SDK" ]; then
             echo "⚙️ تعيين الحد الأدنى minSdk = $MIN_SDK"
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/minSdk(Version)?(\s*=?\s*)[0-9]+/minSdk\2$MIN_SDK/g" {} +
           fi
 
-          # 3. تعديل الحد الأقصى لنظام التشغيل (maxSdkVersion) في AndroidManifest.xml
+          # 3. إغلاق التطبيق برمجياً إذا تم فتحه على نظام أعلى من maxSdk
           if [ -n "$MAX_SDK" ]; then
-            echo "⚙️ تعيين الحد الأقصى maxSdkVersion = $MAX_SDK"
-            find project_dir -type f -name "AndroidManifest.xml" | while read -r manifest_file; do
-              if grep -q "<uses-sdk" "$manifest_file"; then
-                sed -i -E "s/android:maxSdkVersion=\"[0-9]+\"/android:maxSdkVersion=\"$MAX_SDK\"/g" "$manifest_file"
-              else
-                sed -i "s|<manifest|<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">\n    <uses-sdk android:maxSdkVersion=\"$MAX_SDK\" />|g" "$manifest_file"
-              fi
+            echo "⚙️ تفعيل القفل البرمجي للحد الأقصى maxSdk = $MAX_SDK"
+            find project_dir -type f \( -name "MainActivity.kt" -o -name "MainActivity.java" \) | while read -r main_file; do
+              sed -i "/super.onCreate/a \        if (android.os.Build.VERSION.SDK_INT > $MAX_SDK) { android.widget.Toast.makeText(this, \"هذا التطبيق غير مدعوم على إصدار نظامك\", android.widget.Toast.LENGTH_LONG).show(); finish(); return; }" "$main_file"
             done
           fi
 
