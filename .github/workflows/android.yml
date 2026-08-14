@@ -57,21 +57,43 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      # 4. تثبيت Gradle 9.3.1 المتوافق بدون التعديل على إضافات المشروع
+      # 4. تثبيت Gradle 9.3.1 المتوافق
       - name: Setup Gradle 9.3.1
         run: |
           SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
 
-          # ترقية Gradle Wrapper إلى 9.3.1 المتوافق مع AGP 9.1.1
           gradle wrapper --gradle-version 9.3.1 --distribution-type bin || true
           chmod +x ./gradlew
 
-          # إعدادات استقرار بيئة البناء وتخطي القيود
           echo "android.suppressUnsupportedCompileSdk=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
           echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m" >> gradle.properties
+        continue-on-error: true
+
+      # 4.5. استبدال وتطبيق أيقونة التطبيق المرفوعة تلقائياً
+      - name: Replace Custom App Icon
+        run: |
+          BUILD_ID="${{ github.event.client_payload.build_id }}"
+          # البحث عن ملف الأيقونة في الجذر برقم البناء أو أي ملف png مرفوع
+          ICON_FILE=$(find . -maxdepth 2 -name "*${BUILD_ID}*.png" | head -n 1)
+          if [ -z "$ICON_FILE" ]; then
+            ICON_FILE=$(find . -maxdepth 1 -name "*.png" | head -n 1)
+          fi
+
+          if [ -n "$ICON_FILE" ]; then
+            echo "🎨 تم العثور على الأيقونة المخصصة: $ICON_FILE"
+            
+            # البحث عن جميع مسارات أيقونات التشغيل واستبدالها بالصورة الجديدة
+            find project_dir -type f \( -name "ic_launcher*.png" -o -name "ic_launcher*.webp" \) | while read -r target_icon; do
+              echo "🔄 استبدال: $target_icon"
+              cp -f "$ICON_FILE" "$target_icon"
+            done
+            echo "✅ تم تطبيق الأيقونة على كافة مجلدات المشروع بنجاح!"
+          else
+            echo "ℹ️ لم يتم رفع أيقونة مخصصة، سيتم استخدام الأيقونة الافتراضية للمشروع."
+          fi
         continue-on-error: true
 
       # 5. تنفيذ البناء عبر ./gradlew
@@ -83,13 +105,14 @@ jobs:
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
 
-          # إنشاء مفتاح توقيع مؤقت
           keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Debug, O=Android, C=US" || true
           if [ -d "app" ]; then cp -f debug.keystore app/debug.keystore || true; fi
 
           chmod +x ./gradlew
           BUILD_TYPE="${{ github.event.client_payload.build_type }}"
           BUILD_ID="${{ github.event.client_payload.build_id }}"
+          PROJECT_NAME="${{ github.event.client_payload.project_name }}"
+          if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
           if [ "$BUILD_TYPE" == "aab" ]; then
             echo "🚀 بدء بناء حزمة AAB..."
