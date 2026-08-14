@@ -97,17 +97,7 @@ jobs:
 
           if [ "$ENABLE_MINIFY" == "true" ]; then
             find project_dir -type d -name "app" | while read -r app_mod; do
-              cat << 'EOF' >> "$app_mod/proguard-rules.pro"
-              -dontwarn **
-              -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
-              -keep class androidx.activity.** { *; }
-              -keep class androidx.fragment.app.** { *; }
-              -keep public class * extends android.app.Activity
-              -keep public class * extends android.app.Application
-              -keep public class * extends android.app.Service
-              -keep public class * extends android.content.BroadcastReceiver
-              -keepclassmembers enum * { *; }
-EOF
+              printf -- "-dontwarn **\n-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod\n-keep class androidx.activity.** { *; }\n-keep class androidx.fragment.app.** { *; }\n-keep public class * extends android.app.Activity\n-keep public class * extends android.app.Application\n-keep public class * extends android.app.Service\n-keep public class * extends android.content.BroadcastReceiver\n-keepclassmembers enum * { *; }\n" >> "$app_mod/proguard-rules.pro"
             done
 
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
