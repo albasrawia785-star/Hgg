@@ -55,29 +55,19 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      # 4. تثبيت Gradle 9.3.1 المطلوب وتصحيح Compose Compiler تلقائياً
-      - name: Setup Gradle 9.3.1 & Patch Compose
+      # 4. تثبيت Gradle 9.3.1 المتوافق بدون التعديل على إضافات المشروع
+      - name: Setup Gradle 9.3.1
         run: |
           SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
 
-          # 1. ترقية Gradle Wrapper إلى 9.3.1 المتوافق مع AGP 9.1.1
+          # ترقية Gradle Wrapper إلى 9.3.1 المتوافق مع AGP 9.1.1
           gradle wrapper --gradle-version 9.3.1 --distribution-type bin || true
           chmod +x ./gradlew
 
-          # 2. تنظيف إعدادات Compose القديمة
-          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i '/kotlinCompilerExtensionVersion/d' {} +
-          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i '/androidx.compose.compiler:compiler/d' {} +
-          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i '/suppressKotlinVersionCompatibilityCheck/d' {} +
-
-          # 3. إدراج إضافة Compose الحديثة بأمان داخل كتلة plugins القائمة
-          find . -type f -name "build.gradle.kts" -path "*/app/*" -exec sed -i '/plugins\s*{/a \    id("org.jetbrains.kotlin.plugin.compose")' {} +
-          find . -type f -name "build.gradle" -path "*/app/*" -not -name "*.kts" -exec sed -i '/plugins\s*{/a \    id "org.jetbrains.kotlin.plugin.compose"' {} +
-
-          # 4. إعدادات استقرار بيئة البناء
+          # إعدادات استقرار بيئة البناء وتخطي القيود
           echo "android.suppressUnsupportedCompileSdk=true" >> gradle.properties
-          echo "kotlin.mpp.stability.nowarn=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
           echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m" >> gradle.properties
         continue-on-error: true
