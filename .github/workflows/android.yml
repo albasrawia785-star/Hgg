@@ -45,7 +45,7 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      # 4. بناء التطبيق بنفس الطريقة المستقرة الأصلية
+      # 4. بناء التطبيق وضبط توافق Compose مع Gradle
       - name: Build App & Generate Package
         env:
           _JAVA_OPTIONS: "-Djava.awt.headless=true -Xmx4g"
@@ -63,11 +63,18 @@ jobs:
 
           cd "$TARGET_DIR"
 
-          echo "🛠️ 1. تجهيز الـ Gradle Wrapper وتصاريح التشغيل..."
-          gradle wrapper || true
+          echo "🛠️ 1. إعداد Gradle Wrapper متوافق..."
+          # تحديد الإصدار صراحة لمنع الترقية التلقائية إلى Gradle 9.7
+          gradle wrapper --gradle-version 8.8 --distribution-type bin || true
           chmod +x gradlew
 
-          echo "🔑 2. إنشاء ملف debug.keystore المطلوب للتوثيق..."
+          echo "⚙️ 2. حقن خصائص التوافق لـ Kotlin و Compose..."
+          # تعطيل تجربة K2 وحظر التضارب في Compose
+          echo "kotlin.experimental.tryK2=false" >> gradle.properties
+          echo "android.suppressUnsupportedCompileSdk=true" >> gradle.properties
+          echo "suppressKotlinVersionCompatibilityCheck=true" >> gradle.properties
+
+          echo "🔑 3. إنشاء ملف debug.keystore للتوثيق..."
           keytool -genkey -v -keystore debug.keystore \
             -alias androiddebugkey \
             -keyalg RSA -keysize 2048 -validity 10000 \
@@ -76,11 +83,6 @@ jobs:
             -dname "CN=Android Debug, O=Android, C=US" || true
           
           if [ -d "app" ]; then cp -f debug.keystore app/debug.keystore || true; fi
-
-          echo "🔍 3. التحقق من ملف google-services.json..."
-          if [ ! -f "app/google-services.json" ]; then
-            echo "⚠️ تنبيه: ملف google-services.json غير موجود داخل app/."
-          fi
 
           BUILD_TYPE="${{ github.event.client_payload.build_type }}"
           BUILD_ID="${{ github.event.client_payload.build_id }}"
@@ -111,7 +113,7 @@ jobs:
           ./gradlew signingReport --no-daemon | grep -E "Variant: debug|SHA1:" || true
           echo "✅ تم البناء بنجاح!"
 
-      # 5. نشر الملف في Releases لتسهيل التنزيل المباشر من موقعك
+      # 5. نشر الملف في Releases لتسهيل التنزيل المباشر
       - name: Publish Release for Web Download
         uses: softprops/action-gh-release@v2
         if: github.event_name == 'repository_dispatch'
@@ -123,7 +125,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 6. حفظ نسخة احتياطية في Artifacts (مثل سكريبتك القديم تماماً)
+      # 6. حفظ نسخة احتياطية في Artifacts
       - name: Upload Build Artifact Backup
         uses: actions/upload-artifact@v4
         with:
