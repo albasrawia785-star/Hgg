@@ -57,10 +57,12 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      # 4. تطبيق التخصيصات والتحويل التلقائي لـ API Level
+      # 4. تطبيق التخصيصات (Package Name، الحماية والتقليص R8، الاسم والإصدارات)
       - name: Customize App Configurations
         run: |
           APP_NAME="${{ github.event.client_payload.app_name }}"
+          PACKAGE_NAME="${{ github.event.client_payload.package_name }}"
+          ENABLE_MINIFY="${{ github.event.client_payload.enable_minify }}"
           RAW_MIN_SDK="${{ github.event.client_payload.min_sdk }}"
           RAW_TARGET_SDK="${{ github.event.client_payload.target_sdk }}"
           VERSION_CODE="${{ github.event.client_payload.version_code }}"
@@ -93,7 +95,28 @@ jobs:
             find project_dir -type f -name "strings.xml" -exec sed -i "s|<string name=\"app_name\">.*</string>|<string name=\"app_name\">$APP_NAME</string>|g" {} +
           fi
 
-          # 2. تعديل minSdk في ملفات build.gradle و build.gradle.kts
+          # 2. تغيير معرف الحزمة (Package Name / ApplicationId)
+          if [ -n "$PACKAGE_NAME" ]; then
+            echo "📦 تغيير معرّف الحزمة ApplicationId إلى: $PACKAGE_NAME"
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
+              sed -i -E "s/(applicationId\s*=\s*)\"[^\"]+\"/\1\"$PACKAGE_NAME\"/g" "$g_file"
+              sed -i -E "s/(applicationId\s+)\"[^\"]+\"/\1\"$PACKAGE_NAME\"/g" "$g_file"
+              sed -i -E "s/(applicationId\.set\s*\(\s*)\"[^\"]+\"(\s*\))/\1\"$PACKAGE_NAME\"\2/g" "$g_file"
+            done
+          fi
+
+          # 3. تفعيل أو تعطيل تقليص وحماية الكود (R8 / ProGuard Minify)
+          if [ "$ENABLE_MINIFY" == "true" ]; then
+            echo "🛡️ تفعيل تقليص الكود والحماية (isMinifyEnabled = true)"
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
+              sed -i -E "s/(isMinifyEnabled\s*=\s*)false/\1true/g" "$g_file"
+              sed -i -E "s/(minifyEnabled\s+)false/\1true/g" "$g_file"
+              sed -i -E "s/(isShrinkResources\s*=\s*)false/\1true/g" "$g_file"
+              sed -i -E "s/(shrinkResources\s+)false/\1true/g" "$g_file"
+            done
+          fi
+
+          # 4. تعديل minSdk في ملفات build.gradle
           if [ -n "$MIN_SDK" ]; then
             echo "⚙️ تعيين الحد الأدنى للتثبيت minSdk = $MIN_SDK"
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
@@ -104,7 +127,7 @@ jobs:
             done
           fi
 
-          # 3. تعديل Target SDK
+          # 5. تعديل Target SDK
           if [ -n "$TARGET_SDK" ]; then
             echo "⚙️ تعيين Target SDK = $TARGET_SDK"
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
@@ -115,7 +138,7 @@ jobs:
             done
           fi
 
-          # 4. تعديل رقم الإصدار (versionCode)
+          # 6. تعديل رقم الإصدار (versionCode)
           if [ -n "$VERSION_CODE" ]; then
             echo "⚙️ تعيين versionCode = $VERSION_CODE"
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
@@ -125,7 +148,7 @@ jobs:
             done
           fi
 
-          # 5. تعديل اسم الإصدار (versionName)
+          # 7. تعديل اسم الإصدار (versionName)
           if [ -n "$VERSION_NAME" ]; then
             echo "⚙️ تعيين versionName = $VERSION_NAME"
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
@@ -231,28 +254,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 7. الحذف الذكي والنظيف عبر API بدون تعارضات
-      - name: Smart API Cleanup
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          BUILD_ID: ${{ github.event.client_payload.build_id }}
-        run: |
-          echo "🧹 جاري تنظيف الملفات المرفوعة عبر API..."
-          for file in $(find . -maxdepth 1 -name "*${BUILD_ID}*.zip" -o -name "*${BUILD_ID}*.png" | sed 's|^\./||'); do
-            SHA=$(curl -s -H "Authorization: token $GH_TOKEN" \
-              "https://api.github.com/repos/$REPO/contents/$file" | jq -r '.sha')
-            
-            if [ "$SHA" != "null" ] && [ -n "$SHA" ]; then
-              curl -s -X DELETE \
-                -H "Authorization: token $GH_TOKEN" \
-                -H "Accept: application/vnd.github.v3+json" \
-                -d "{\"message\": \"Auto-clean: delete $file\", \"sha\": \"$SHA\"}" \
-                "https://api.github.com/repos/$REPO/contents/$file" > /dev/null
-              echo "✅ تم حذف $file"
-            fi
-          done
-ون تعارضات
       - name: Smart API Cleanup
         if: always()
         env:
