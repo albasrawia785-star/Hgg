@@ -30,6 +30,8 @@ jobs:
       - name: Locate and Extract Project
         run: |
           BUILD_ID="${{ github.event.client_payload.build_id }}"
+          PROJECT_NAME="${{ github.event.client_payload.project_name }}"
+          if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
           echo "🔍 جاري البحث عن ملف المشروع برقم البناء: $BUILD_ID"
           
           ZIP_FILE=""
@@ -93,12 +95,12 @@ jobs:
             echo "🚀 بدء بناء حزمة AAB..."
             ./gradlew clean bundleRelease --no-daemon || ./gradlew clean bundleDebug --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
-            FINAL_NAME="app-release-${BUILD_ID}.aab"
+            FINAL_NAME="${PROJECT_NAME}.aab"
           else
             echo "🚀 بدء بناء حزمة APK..."
             ./gradlew clean assembleDebug --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/apk/debug/*.apk" -o -name "*debug*.apk" | head -n 1)
-            FINAL_NAME="app-debug-${BUILD_ID}.apk"
+            FINAL_NAME="${PROJECT_NAME}.apk"
           fi
 
           if [ -z "$OUT_FILE" ]; then
