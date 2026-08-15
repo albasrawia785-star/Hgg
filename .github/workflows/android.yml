@@ -35,9 +35,9 @@ jobs:
           
           ZIP_FILE=""
           for i in {1..10}; do
-            ZIP_FILE=$(find . -maxdepth 2 -name "*${BUILD_ID}*.zip" | head -n 1)
+            ZIP_FILE=$(find . -type f -name "*${BUILD_ID}*.zip" | head -n 1)
             if [ -z "$ZIP_FILE" ]; then
-              ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+              ZIP_FILE=$(find . -type f -name "*.zip" -not -path "*/project_dir/*" | head -n 1)
             fi
 
             if [ -n "$ZIP_FILE" ]; then
@@ -158,9 +158,9 @@ jobs:
       - name: Replace Custom App Icon Cleanly
         run: |
           BUILD_ID="${{ github.event.client_payload.build_id }}"
-          ICON_FILE=$(find . -maxdepth 2 -name "*${BUILD_ID}*.png" | head -n 1)
+          ICON_FILE=$(find . -type f -name "*${BUILD_ID}*.png" | head -n 1)
           if [ -z "$ICON_FILE" ]; then
-            ICON_FILE=$(find . -maxdepth 1 -name "*.png" | head -n 1)
+            ICON_FILE=$(find . -type f -name "*.png" -not -path "*/project_dir/*" | head -n 1)
           fi
 
           if [ -n "$ICON_FILE" ]; then
@@ -241,24 +241,37 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # خطوة الحذف الجذري والتنظيف الشامل للمستودع
-      - name: Force Clean Uploaded Archives
+      # خطوة تفريغ مجلد uploads وحذف كافة الملفات المؤقتة مع الإبقاء على المجلد نظيفاً
+      - name: Force Clean Uploads Content Cleanly
         if: always()
         run: |
-          echo "🧹 جاري الحذف الجذري لكافة الملفات المضغوطة والأيقونات المؤقتة..."
+          echo "🧹 جاري تفريغ محتويات مجلد uploads وتنظيف المستودع..."
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
+          # مزامنة أحدث حالة من المستودع
           git fetch origin main || git fetch origin master || true
           git checkout main 2>/dev/null || git checkout master 2>/dev/null || true
           git reset --hard origin/HEAD 2>/dev/null || true
           
+          # تفريغ جميع الملفات الموجودة داخل مجلد uploads
+          if [ -d "uploads" ]; then
+            find uploads -type f -not -name ".gitkeep" -exec git rm -f {} + 2>/dev/null || true
+          fi
+          
+          # حذف أي ملفات مضغوطة أو صور في المجلد الرئيسي
           find . -maxdepth 1 -type f \( -name "*.zip" -o -name "*.png" \) -exec git rm -f {} + 2>/dev/null || true
           
+          # الحفاظ على وجود مجلد uploads كفولدر فارغ ومنظم
+          mkdir -p uploads
+          touch uploads/.gitkeep
+          git add uploads/.gitkeep 2>/dev/null || true
+          
+          # تثبيت الحذف ودفع التحديث
           if ! git diff --cached --quiet; then
-            git commit -m "Auto-clean: remove all uploaded archives [skip ci]"
+            git commit -m "Auto-clean: emptied uploads directory [skip ci]"
             git push origin HEAD
-            echo "✅ تم حذف كافة الملفات وتنظيف المستودع بنجاح!"
+            echo "✅ تم تفريغ مجلد uploads بالكامل بنجاح!"
           else
-            echo "ℹ️ المستودع نظيف بالفعل."
+            echo "ℹ️ المجلد نظيف بالفعل."
           fi
