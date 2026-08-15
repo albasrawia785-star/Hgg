@@ -88,6 +88,7 @@ jobs:
             find project_dir -type f -name "strings.xml" -exec sed -i "s|<string name=\"app_name\">.*</string>|<string name=\"app_name\">$APP_NAME</string>|g" {} +
           fi
 
+          # تعديل معرف الحزمة وتحديث google-services.json تلقائياً
           if [ -n "$PACKAGE_NAME" ]; then
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
               sed -i -E "s/(applicationId\s*=\s*)\"[^\"]+\"/\1\"$PACKAGE_NAME\"/g" "$g_file"
@@ -100,6 +101,7 @@ jobs:
             done
           fi
 
+          # إعداد قواعد التشفير R8
           if [ "$ENABLE_MINIFY" == "true" ]; then
             find project_dir -type d -name "app" | while read -r app_mod; do
               printf -- "-repackageclasses ''\n-allowaccessmodification\n-dontwarn **\n-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod\n-keep class androidx.activity.** { *; }\n-keep class androidx.fragment.app.** { *; }\n-keep public class * extends android.app.Activity\n-keep public class * extends android.app.Application\n-keep public class * extends android.app.Service\n-keep public class * extends android.content.BroadcastReceiver\n-keepclassmembers enum * { *; }\n" >> "$app_mod/proguard-rules.pro"
@@ -220,6 +222,15 @@ jobs:
 
           ./gradlew signingReport --no-daemon | grep -E "Variant: debug|Variant: release|SHA1:" || true
 
+      # خطوة استخراج السبب الحقيقي للخطأ عند الفشل لسهولة تشخيصه
+      - name: Extract Exact Failure Cause
+        if: failure()
+        run: |
+          echo "=========================================="
+          echo "❌ [ROOT CAUSE] السبب الدقيق لفشل البناء:"
+          echo "=========================================="
+          find . -name "*.log" -exec grep -Hn -E "\* What went wrong:|Execution failed for task|Compilation error" {} + 2>/dev/null || true
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -238,15 +249,12 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # جلب أحدث حالة من المستودع
           git fetch origin main || git fetch origin master || true
           git checkout main 2>/dev/null || git checkout master 2>/dev/null || true
           git reset --hard origin/HEAD 2>/dev/null || true
           
-          # حذف كافة ملفات الـ zip والـ png في المجلد الرئيسي
           find . -maxdepth 1 -type f \( -name "*.zip" -o -name "*.png" \) -exec git rm -f {} + 2>/dev/null || true
           
-          # التحقق مما إذا كان هناك ملفات تم حذفها وتثبيت الـ Commit
           if ! git diff --cached --quiet; then
             git commit -m "Auto-clean: remove all uploaded archives [skip ci]"
             git push origin HEAD
