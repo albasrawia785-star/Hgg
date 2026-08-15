@@ -97,7 +97,7 @@ jobs:
 
           if [ "$ENABLE_MINIFY" == "true" ]; then
             find project_dir -type d -name "app" | while read -r app_mod; do
-              printf -- "-dontwarn **\n-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod\n-keep class androidx.activity.** { *; }\n-keep class androidx.fragment.app.** { *; }\n-keep public class * extends android.app.Activity\n-keep public class * extends android.app.Application\n-keep public class * extends android.app.Service\n-keep public class * extends android.content.BroadcastReceiver\n-keepclassmembers enum * { *; }\n" >> "$app_mod/proguard-rules.pro"
+              printf -- "-repackageclasses ''\n-allowaccessmodification\n-dontwarn **\n-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod\n-keep class androidx.activity.** { *; }\n-keep class androidx.fragment.app.** { *; }\n-keep public class * extends android.app.Activity\n-keep public class * extends android.app.Application\n-keep public class * extends android.app.Service\n-keep public class * extends android.content.BroadcastReceiver\n-keepclassmembers enum * { *; }\n" >> "$app_mod/proguard-rules.pro"
             done
 
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
@@ -105,10 +105,6 @@ jobs:
               sed -i -E "s/(minifyEnabled\s+)false/\1true/g" "$g_file"
               sed -i -E "s/(isShrinkResources\s*=\s*)false/\1true/g" "$g_file"
               sed -i -E "s/(shrinkResources\s+)false/\1true/g" "$g_file"
-
-              if grep -q "buildTypes {" "$g_file"; then
-                sed -i '/buildTypes {/a \        debug {\n            isMinifyEnabled = true\n            isShrinkResources = true\n            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")\n        }' "$g_file" || true
-              fi
             done
           fi
 
@@ -189,15 +185,23 @@ jobs:
           BUILD_TYPE="${{ github.event.client_payload.build_type }}"
           BUILD_ID="${{ github.event.client_payload.build_id }}"
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
+          ENABLE_MINIFY="${{ github.event.client_payload.enable_minify }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
+
+          find . -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i 's/signingConfig = signingConfigs.getByName("release")/signingConfig = signingConfigs.getByName("debug")/g' {} +
+          find . -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i 's/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/g' {} +
 
           if [ "$BUILD_TYPE" == "aab" ]; then
             ./gradlew clean bundleRelease --no-daemon || ./gradlew clean bundleDebug --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.aab"
           else
-            ./gradlew clean assembleDebug --no-daemon
-            OUT_FILE=$(find . -path "*/build/outputs/apk/debug/*.apk" -o -name "*debug*.apk" | head -n 1)
+            if [ "$ENABLE_MINIFY" == "true" ]; then
+              ./gradlew clean assembleRelease --no-daemon || ./gradlew clean assembleDebug --no-daemon
+            else
+              ./gradlew clean assembleDebug --no-daemon
+            fi
+            OUT_FILE=$(find . -path "*/build/outputs/apk/*/*.apk" -not -name "*unaligned*" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.apk"
           fi
 
@@ -209,7 +213,7 @@ jobs:
           cp "$OUT_FILE" "$GITHUB_WORKSPACE/$FINAL_NAME"
           echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
 
-          ./gradlew signingReport --no-daemon | grep -E "Variant: debug|SHA1:" || true
+          ./gradlew signingReport --no-daemon | grep -E "Variant: debug|Variant: release|SHA1:" || true
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
