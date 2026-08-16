@@ -1,4 +1,4 @@
-Name: Universal Bulletproof Android Builder & Military Hardener
+name: Universal Bulletproof Android Builder & Military Hardener
 
 on:
   repository_dispatch:
