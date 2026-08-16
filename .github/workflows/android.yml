@@ -141,88 +141,133 @@ jobs:
           fi
         continue-on-error: true
 
-      # 🛡️ الفحص الأمني والتحكم بالإصلاح بناءً على اختيار المستخدم (Auto-Fix Switch)
-      - name: Security Scan and Conditional Auto-Shielding
+      # 🛡️ محرك التدقيق الأمني السيبراني المتقدم (Cybersecurity AppSec Engine)
+      - name: Advanced Cybersecurity Audit & Threat Remediation
         run: |
           AUTO_FIX="${{ github.event.client_payload.auto_fix }}"
           if [ -z "$AUTO_FIX" ]; then AUTO_FIX="${{ github.event.client_payload.enable_security_shield }}"; fi
           if [ -z "$AUTO_FIX" ]; then AUTO_FIX="true"; fi
 
-          echo "========================================================"
-          echo "🔍 بدء الفحص الأمني (وضع الإصلاح التلقائي: $AUTO_FIX)..."
-          echo "========================================================"
+          echo "================================================================="
+          echo "🕵️‍♂️ بدء التدقيق السيبراني الشامل (Cybersecurity Threat Audit)..."
+          echo "================================================================="
 
-          cat << 'EOF' > security_shield.py
+          cat << 'EOF' > cyber_sentinel.py
           import os
           import sys
           import re
           import random
 
-          auto_fix_enabled = sys.argv[1].lower() == "true"
+          auto_fix = sys.argv[1].lower() == "true"
 
-          def generate_obfuscated_code(secret_text):
-              key = random.randint(105, 245)
-              encrypted_bytes = [str(ord(c) ^ key) for c in secret_text]
-              bytes_str = ", ".join(encrypted_bytes)
-              return f"String(byteArrayOf({bytes_str}).map {{ (it.toInt() xor {key}).toByte() }}.toByteArray())"
+          def xor_obfuscate(text):
+              key = random.randint(110, 245)
+              bytes_arr = [str(ord(c) ^ key) for c in text]
+              return f"String(byteArrayOf({', '.join(bytes_arr)}).map {{ (it.toInt() xor {key}).toByte() }}.toByteArray())"
 
-          findings = []
-          secured_items = 0
+          critical_risks = []
+          remediated_count = 0
 
-          secret_patterns = [
-              (r'(password|passwd|pass|admin_pass|secret_key|api_secret)\s*(=|:)\s*"([^"]{4,})"', "كلمة سر / مفتاح سري"),
-              (r'(db_password|database_password)\s*(=|:)\s*"([^"]{4,})"', "كلمة مرور قاعدة بيانات"),
+          # 1. تدقيق ملفات AndroidManifest وسلوك النظام والذاكرة
+          for root, _, files in os.walk("project_dir"):
+              for file in files:
+                  if file == "AndroidManifest.xml":
+                      m_path = os.path.join(root, file)
+                      with open(m_path, "r", encoding="utf-8", errors="ignore") as f:
+                          manifest = f.read()
+
+                      # ثغرة سحب البيانات عبر adb backup
+                      if 'android:allowBackup="true"' in manifest:
+                          critical_risks.append("🚨 [High Risk] تم رصد allowBackup=true (يتيح سحب بيانات التطبيق وقواعد البيانات عبر ADB)")
+                          if auto_fix:
+                              manifest = manifest.replace('android:allowBackup="true"', 'android:allowBackup="false"')
+                              remediated_count += 1
+
+                      # ثغرة السماح باتصالات HTTP غير مشفرة (Man-In-The-Middle)
+                      if 'android:usesCleartextTraffic="true"' in manifest:
+                          critical_risks.append("🚨 [Critical Risk] تفعيل usesCleartextTraffic (تسريب بيانات المستخدم عبر اتصالات HTTP غير مشفرة)")
+                          if auto_fix:
+                              manifest = manifest.replace('android:usesCleartextTraffic="true"', 'android:usesCleartextTraffic="false"')
+                              remediated_count += 1
+
+                      # ثغرة المكونات المصدرة بدون أذونات حماية
+                      if re.search(r'<(activity|service|receiver)[^>]+android:exported="true"[^>]*>(?!.*android:permission)', manifest):
+                          critical_risks.append("⚠️ [Medium Risk] تم رصد مكونات عامة (Exported) بدون حماية بـ Permission")
+
+                      if auto_fix:
+                          with open(m_path, "w", encoding="utf-8") as f:
+                              f.write(manifest)
+
+          # 2. تدقيق الأكواد المصدرية (Source Code Static Analysis)
+          secret_signatures = [
+              (r'(AIzaSy[0-9A-Za-z-_]{33})', "مفتاح Firebase API مكشوف"),
+              (r'(password|passwd|pass|admin_pass|secret_key|api_secret)\s*(=|:)\s*"([^"]{4,})"', "كلمة مرور أو توكن مصادقة صريح"),
+              (r'(db_password|database_pass|db_secret)\s*(=|:)\s*"([^"]{4,})"', "بيانات اعتماد قاعدة بيانات"),
+              (r'(ghp_[0-9a-zA-Z]{36})', "رمز وصول شخصي لـ GitHub مسرب"),
           ]
 
           for root, dirs, files in os.walk("project_dir"):
               dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
               for file in files:
                   if file.endswith(('.kt', '.java')):
-                      filepath = os.path.join(root, file)
-                      with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                      f_path = os.path.join(root, file)
+                      with open(f_path, "r", encoding="utf-8", errors="ignore") as f:
                           content = f.read()
 
                       modified = False
-                      for pattern, desc in secret_patterns:
+
+                      # فحص تسريب السجلات (Log Leaks)
+                      if re.search(r'Log\.(d|v|i|e|w)\(', content):
+                          critical_risks.append(f"ℹ️ [Information Leak] استخدام نصوص Log صريحة قد تكشف تدفق البيانات في ({file})")
+
+                      # فحص وتشفير النصوص الحساسة
+                      for pattern, label in secret_signatures:
                           matches = list(re.finditer(pattern, content, re.IGNORECASE))
-                          if matches:
-                              for match in matches:
-                                  var_name = match.group(1)
-                                  op = match.group(2)
-                                  secret_val = match.group(3)
-                                  
-                                  if secret_val.lower() in ["", "true", "false", "default", "null"]:
+                          for m in matches:
+                              if len(m.groups()) >= 3:
+                                  v_name, op, v_val = m.group(1), m.group(2), m.group(3)
+                                  if v_val.lower() in ["", "true", "false", "default", "null"]:
                                       continue
-
-                                  if auto_fix_enabled:
-                                      obfuscated = generate_obfuscated_code(secret_val)
-                                      content = content.replace(match.group(0), f"{var_name} {op} {obfuscated}")
+                                  if auto_fix:
+                                      content = content.replace(m.group(0), f"{v_name} {op} {xor_obfuscate(v_val)}")
                                       modified = True
-                                      secured_items += 1
-                                      findings.append(f"🔒 [تم الإصلاح والتشفير] {desc} في ({file}) للمتغير [{var_name}]")
+                                      remediated_count += 1
+                                      critical_risks.append(f"🔒 [Remediated] تم تشفير {label} للمتغير [{v_name}] في ({file})")
                                   else:
-                                      findings.append(f"⚠️ [تم الرصد بدون إصلاح بناءً على طلبك] {desc} في ({file}) للمتغير [{var_name}]")
+                                      critical_risks.append(f"🚨 [Detected] {label} مكشوف للمتغير [{v_name}] في ({file})")
+                              elif len(m.groups()) == 1:
+                                  val = m.group(1)
+                                  if auto_fix:
+                                      content = content.replace(val, xor_obfuscate(val))
+                                      modified = True
+                                      remediated_count += 1
+                                      critical_risks.append(f"🔒 [Remediated] تم تشفير {label} في ({file})")
+                                  else:
+                                      critical_risks.append(f"🚨 [Detected] {label} في ({file})")
 
-                      if modified and auto_fix_enabled:
-                          with open(filepath, 'w', encoding='utf-8') as f:
+                      if modified and auto_fix:
+                          with open(f_path, "w", encoding="utf-8") as f:
                               f.write(content)
 
-          print("\n📊 --- تقرير الفحص الأمني النهائي ---")
-          if findings:
-              for item in findings:
-                  print(f"  • {item}")
+          # 3. إعداد تقرير الخبير النهائي
+          print("\n" + "═"*65)
+          print("🛡️ تقرير التدقيق السيبراني المتقدم (Cyber Sentinel Security Audit)")
+          print("═"*65)
+          if critical_risks:
+              for threat in critical_risks:
+                  print(f"  • {threat}")
           else:
-              print("  ✅ الأكواد سليمة ولا توجد كلمات سر مكشوفة بصيغة صريحة.")
+              print("  ✅ [PASSED] لا توجد ثغرات صريحة أو نصوص حساسة مكشوفة في الكود.")
 
-          if auto_fix_enabled:
-              print(f"\n🛡️ إجمالي النصوص الحساسة التي تم تشفيرها بنجاح: {secured_items}")
+          if auto_fix:
+              print(f"\n🎯 تم بنجاح إغلاق وتشفير وتحصين: {remediated_count} نقطة ضعف أمنية.")
           else:
-              print("\nℹ️ تم تخطي التشفير التلقائي (البناء بالصيغة الأصلية).")
-          print("========================================================\n")
+              print("\n⚠️ تم إيقاف الإصلاح التلقائي بناءً على طلبك (بناء بالكود الأصلي).")
+          print("═"*65 + "\n")
           EOF
 
-          python3 security_shield.py "$AUTO_FIX"
-          rm security_shield.py
+          python3 cyber_sentinel.py "$AUTO_FIX"
+          rm cyber_sentinel.py
         continue-on-error: true
 
       - name: Setup Gradle 9.3.1
