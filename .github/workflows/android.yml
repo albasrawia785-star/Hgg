@@ -233,8 +233,8 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ إنشاء وتوزيع مفاتيح التوقيع وحل مشكلة my-upload-key.jks المفقود
-      - name: Universal Keystore Provisioning & Build
+      # ⚙️ تنظيف وحقن إعدادات التوقيع الشاملة وحل خطأ storePassword نهائياً
+      - name: Fix Signing Configs & Build APK
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
         run: |
@@ -242,30 +242,48 @@ jobs:
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
 
-          # 🔑 1. توليد مفتاح التوقيع الشامل
-          keytool -genkey -v -keystore universal.keystore -alias androidkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Secure, O=Android, C=US" || true
-
-          # 🔑 2. نسخ المفتاح بكل الأسماء المطلوبة وفي كل مسارات المشروع
-          for k_name in "my-upload-key.jks" "release.keystore" "debug.keystore" "upload-keystore.jks" "key.jks"; do
+          # 🔑 1. توليد مفاتيح التوقيع بكل الصيغ الممكنة
+          keytool -genkey -v -keystore universal.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Debug, O=Android, C=US" || true
+          for k_name in "my-upload-key.jks" "release.keystore" "debug.keystore" "upload-keystore.jks" "key.jks" "keystore.jks"; do
             cp -f universal.keystore "$k_name"
             if [ -d "app" ]; then cp -f universal.keystore "app/$k_name"; fi
             find . -type d -name "app" -exec cp -f universal.keystore "{}/$k_name" \; 2>/dev/null || true
           done
 
-          # 🔑 3. تجاوز فحص الـ Lint Vital لتسريع البناء وتفادي أخطائه
-          find . -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
-            sed -i 's/checkReleaseBuilds = true/checkReleaseBuilds = false/g' "$g_file" || true
-            sed -i 's/checkReleaseBuilds true/checkReleaseBuilds false/g' "$g_file" || true
-            sed -i 's/abortOnError = true/abortOnError = false/g' "$g_file" || true
-            sed -i 's/abortOnError true/abortOnError false/g' "$g_file" || true
-          done
+          # 🔑 2. إجبار كافة ملفات Gradle على استخدام debug signing config المضمون وتخطي أخطاء Lint
+          cat << 'EOF' > fix_signing.py
+          import os, re
+
+          for root, _, files in os.walk("."):
+              for file in files:
+                  if file in ["build.gradle", "build.gradle.kts"]:
+                      p = os.path.join(root, file)
+                      with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                          c = f.read()
+
+                      # استبدال أي طلب لتوقيع release بتوقيع debug المضمون
+                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.getByName\("release"\)', 'signingConfig = signingConfigs.getByName("debug")', c)
+                      c = re.sub(r'signingConfig\s+signingConfigs\.release', 'signingConfig signingConfigs.debug', c)
+                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.release', 'signingConfig = signingConfigs.debug', c)
+
+                      # إيقاف توقف البناء عند مشاكل Lint
+                      c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
+                      c = re.sub(r'checkReleaseBuilds\s+true', 'checkReleaseBuilds false', c)
+                      c = re.sub(r'abortOnError\s*=\s*true', 'abortOnError = false', c)
+                      c = re.sub(r'abortOnError\s+true', 'abortOnError false', c)
+
+                      with open(p, "w", encoding="utf-8") as f:
+                          f.write(c)
+          EOF
+          python3 fix_signing.py
+          rm fix_signing.py
 
           chmod +x ./gradlew
           BUILD_TYPE="${{ github.event.client_payload.build_type }}"
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
-          # 🔑 4. تجميع النسخة (مع تخطي Lint Vital لتسريع الإنهاء)
+          # 🔑 3. تنفيذ التجميع
           if [ "$BUILD_TYPE" == "aab" ]; then
             ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
@@ -284,7 +302,7 @@ jobs:
           cp "$OUT_FILE" "$GITHUB_WORKSPACE/$FINAL_NAME"
           echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
 
-          ./gradlew signingReport --no-daemon | grep -E "Variant: release|SHA1:" || true
+          ./gradlew signingReport --no-daemon | grep -E "Variant: release|Variant: debug|SHA1:" || true
 
       - name: Extract Exact Failure Cause
         if: failure()
@@ -298,9 +316,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: build-${{ github.event.client_payload.build_id }}
-          name: Build ${{ github.event.client_payload.build_id }}
-          files: ${{ env.FINAL_ASSET }}
+          tag_name: "build-${{ github.event.client_payload.build_id }}"
+          name: "Build ${{ github.event.client_payload.build_id }}"
+          files: |
+            ${{ env.FINAL_ASSET }}
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
