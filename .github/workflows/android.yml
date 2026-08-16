@@ -45,10 +45,11 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      - name: Customize App Configurations & Mock Missing Services
+      # ⚙️ تخصيص ومطابقة الـ Package Name و Google Services تلقائياً
+      - name: Auto-Sync Package Name & Google Services
         run: |
           APP_NAME="${{ github.event.client_payload.app_name }}"
-          PACKAGE_NAME="${{ github.event.client_payload.package_name }}"
+          USER_PKG="${{ github.event.client_payload.package_name }}"
           RAW_MIN_SDK="${{ github.event.client_payload.min_sdk }}"
           VERSION_CODE="${{ github.event.client_payload.version_code }}"
           VERSION_NAME="${{ github.event.client_payload.version_name }}"
@@ -66,21 +67,80 @@ jobs:
             find project_dir -type f -name "strings.xml" -exec sed -i "s|<string name=\"app_name\">.*</string>|<string name=\"app_name\">$APP_NAME</string>|g" {} +
           fi
 
-          if [ -n "$PACKAGE_NAME" ]; then
+          # إذا حدد المستخدم حزمة جديدة نطبقها
+          if [ -n "$USER_PKG" ]; then
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
-              sed -i -E "s/(applicationId\s*=\s*)\"[^\"]+\"/\1\"$PACKAGE_NAME\"/g" "$g_file"
-              sed -i -E "s/(applicationId\s+)\"[^\"]+\"/\1\"$PACKAGE_NAME\"/g" "$g_file"
-              sed -i -E "s/(applicationId\.set\s*\(\s*)\"[^\"]+\"(\s*\))/\1\"$PACKAGE_NAME\"\2/g" "$g_file"
+              sed -i -E "s/(applicationId\s*=\s*)\"[^\"]+\"/\1\"$USER_PKG\"/g" "$g_file"
+              sed -i -E "s/(applicationId\s+)\"[^\"]+\"/\1\"$USER_PKG\"/g" "$g_file"
+              sed -i -E "s/(applicationId\.set\s*\(\s*)\"[^\"]+\"(\s*\))/\1\"$USER_PKG\"\2/g" "$g_file"
             done
           fi
 
-          # إنشاء google-services.json افتراضي في حال طلبه البرنامج لمنع أخطاء المعالجة
-          DUMMY_JSON='{"project_info":{"project_number":"123456789","project_id":"app-project","storage_bucket":"app.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:123456789:android:abcdef","android_client_info":{"package_name":"com.example.app"}},"api_key":[{"current_key":"AIzaSyMockKeyForBuildPass1234567890"}]}]}'
-          find project_dir -type d -name "app" | while read -r app_dir; do
-            if [ ! -f "$app_dir/google-services.json" ]; then
-              echo "$DUMMY_JSON" > "$app_dir/google-services.json"
-            fi
-          done
+          # استخراج اسم الحزمة الفعلي المستخدم حالياً في المشروع
+          cat << 'EOF' > sync_pkg.py
+          import os, re, json
+
+          detected_pkg = ""
+          for root, _, files in os.walk("project_dir"):
+              for file in files:
+                  if file in ["build.gradle.kts", "build.gradle"]:
+                      with open(os.path.join(root, file), 'r', encoding='utf-8', errors='ignore') as f:
+                          content = f.read()
+                      m = re.search(r'applicationId\s*(?:=\s*|\s+)"([^"]+)"', content)
+                      if m:
+                          detected_pkg = m.group(1)
+                          break
+              if detected_pkg:
+                  break
+
+          if not detected_pkg:
+              detected_pkg = "com.aistudio.restaurantpos.vmdjqk"
+
+          print(f"📦 اسم الحزمة الفعلي المعتمد: {detected_pkg}")
+
+          # تجهيز قالب google-services متوافق 100%
+          dummy_data = {
+              "project_info": {
+                  "project_number": "123456789",
+                  "project_id": "app-project-universal",
+                  "storage_bucket": "app.appspot.com"
+              },
+              "client": [{
+                  "client_info": {
+                      "mobilesdk_app_id": "1:123456789:android:abcdef123456",
+                      "android_client_info": {
+                          "package_name": detected_pkg
+                      }
+                  },
+                  "oauth_client": [],
+                  "api_key": [{"current_key": "AIzaSyDummyKeyForBuildSuccessPass12345"}],
+                  "services": {"appinvite_service": {"other_platform_oauth_client": []}}
+              }],
+              "configuration_version": "1"
+          }
+
+          # تحديث أو إنشاء google-services.json في كل المسارات
+          for root, dirs, files in os.walk("project_dir"):
+              if os.path.basename(root) == "app" or "src" in dirs:
+                  json_path = os.path.join(root, "google-services.json")
+                  if os.path.exists(json_path):
+                      try:
+                          with open(json_path, 'r', encoding='utf-8') as f:
+                              d = json.load(f)
+                          if "client" in d and len(d["client"]) > 0:
+                              for c in d["client"]:
+                                  c["client_info"]["android_client_info"]["package_name"] = detected_pkg
+                          with open(json_path, 'w', encoding='utf-8') as f:
+                              json.dump(d, f, indent=2)
+                      except Exception:
+                          with open(json_path, 'w', encoding='utf-8') as f:
+                              json.dump(dummy_data, f, indent=2)
+                  else:
+                      with open(json_path, 'w', encoding='utf-8') as f:
+                          json.dump(dummy_data, f, indent=2)
+          EOF
+          python3 sync_pkg.py
+          rm sync_pkg.py
 
           if [ -n "$MIN_SDK" ]; then
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/(minSdk(Version)?\s*=\s*)[0-9]+/\1$MIN_SDK/g" {} +
@@ -127,7 +187,6 @@ jobs:
                           f.write(m)
 
           # 2. تشفير كلاسات الأسرار والكائنات وUtils وUI مع استثناء Room Entities
-          # النمط يلتقط: const val X = "..." أو val X = "..."
           pattern_kt = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*(?::\s*String)?\s*=\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
 
           for root, dirs, files in os.walk("project_dir"):
@@ -138,9 +197,7 @@ jobs:
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           content = f.read()
 
-                      # استثناء ملفات قواعد البيانات لضمان نجاح معالج KSP و Room
                       if any(k in content for k in ["@Entity", "@Dao", "@Database", "androidx.room", "data class"]):
-                          # في ملفات الـ data classes نشفر فقط const val المستقلة إن وجدت
                           def repl_safe(m):
                               global secured_count
                               if m.group(1).startswith("const"):
@@ -149,7 +206,6 @@ jobs:
                               return m.group(0)
                           new_content = re.sub(r'const\s+val\s+([a-zA-Z0-9_]+)\s*=\s*"([^"]+)"', repl_safe, content)
                       else:
-                          # الكلاسات الأخرى (مثل Human.kt, Auth, Utils, Constants, UI) يتم تشفيرها بالكامل بـ Dynamic Getters
                           def repl_kt(match):
                               global secured_count
                               var_name = match.group(2)
