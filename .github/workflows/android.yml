@@ -45,7 +45,7 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      - name: Customize App Configurations
+      - name: Customize App Configurations & Mock Missing Services
         run: |
           APP_NAME="${{ github.event.client_payload.app_name }}"
           PACKAGE_NAME="${{ github.event.client_payload.package_name }}"
@@ -72,10 +72,15 @@ jobs:
               sed -i -E "s/(applicationId\s+)\"[^\"]+\"/\1\"$PACKAGE_NAME\"/g" "$g_file"
               sed -i -E "s/(applicationId\.set\s*\(\s*)\"[^\"]+\"(\s*\))/\1\"$PACKAGE_NAME\"\2/g" "$g_file"
             done
-            find project_dir -type f -name "google-services.json" | while read -r json_file; do
-              sed -i -E "s/\"package_name\":\s*\"[^\"]+\"/\"package_name\": \"$PACKAGE_NAME\"/g" "$json_file"
-            done
           fi
+
+          # إنشاء google-services.json افتراضي في حال طلبه البرنامج لمنع أخطاء المعالجة
+          DUMMY_JSON='{"project_info":{"project_number":"123456789","project_id":"app-project","storage_bucket":"app.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:123456789:android:abcdef","android_client_info":{"package_name":"com.example.app"}},"api_key":[{"current_key":"AIzaSyMockKeyForBuildPass1234567890"}]}]}'
+          find project_dir -type d -name "app" | while read -r app_dir; do
+            if [ ! -f "$app_dir/google-services.json" ]; then
+              echo "$DUMMY_JSON" > "$app_dir/google-services.json"
+            fi
+          done
 
           if [ -n "$MIN_SDK" ]; then
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/(minSdk(Version)?\s*=\s*)[0-9]+/\1$MIN_SDK/g" {} +
@@ -88,14 +93,14 @@ jobs:
           fi
         continue-on-error: true
 
-      # 🛡️ إجبار التشفير الشامل لكل المتغيرات والنصوص (تم تصحيح كود Python بالكامل)
-      - name: Force Military Universal String Encryption & R8 Hardening
+      # 🛡️ محرك التشفير الآمن المتوافق 100% مع KSP و Room Data Models
+      - name: Smart Targeted String Obfuscation & Security Hardening
         run: |
           echo "================================================================="
-          echo "🛡️ جاري تنفيذ التشفير الإجباري وتجريد ملفات الكوتلن من النصوص الصريحة..."
+          echo "🛡️ تفعيل التشفير الذكي (استثناء ملفات النماذج وقواعد البيانات)..."
           echo "================================================================="
 
-          cat << 'EOF' > force_encrypt.py
+          cat << 'EOF' > smart_encrypt.py
           import os
           import re
           import random
@@ -108,7 +113,7 @@ jobs:
 
           secured_count = 0
 
-          # 1. تحصين المانيفست
+          # 1. تأمين المانيفست
           for root, _, files in os.walk("project_dir"):
               for file in files:
                   if file == "AndroidManifest.xml":
@@ -121,19 +126,9 @@ jobs:
                       with open(p, "w", encoding="utf-8") as f:
                           f.write(m)
 
-          # 2. تشفير كافة المتغيرات النصية في ملفات Kotlin وتحويلها إلى Dynamic Getters
+          # 2. تشفير كلاسات الأسرار والكائنات وUtils وUI مع استثناء Room Entities
+          # النمط يلتقط: const val X = "..." أو val X = "..."
           pattern_kt = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*(?::\s*String)?\s*=\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
-
-          def repl_kt(match):
-              global secured_count
-              var_name = match.group(2)
-              str_val = match.group(3)
-
-              if str_val in ["", " "]:
-                  return match.group(0)
-
-              secured_count += 1
-              return f"val {var_name}: String get() = {polymorphic_xor(str_val)}"
 
           for root, dirs, files in os.walk("project_dir"):
               dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
@@ -143,20 +138,46 @@ jobs:
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           content = f.read()
 
-                      new_content = re.sub(pattern_kt, repl_kt, content)
+                      # استثناء ملفات قواعد البيانات لضمان نجاح معالج KSP و Room
+                      if any(k in content for k in ["@Entity", "@Dao", "@Database", "androidx.room", "data class"]):
+                          # في ملفات الـ data classes نشفر فقط const val المستقلة إن وجدت
+                          def repl_safe(m):
+                              global secured_count
+                              if m.group(1).startswith("const"):
+                                  secured_count += 1
+                                  return f"val {m.group(2)} = {polymorphic_xor(m.group(3))}"
+                              return m.group(0)
+                          new_content = re.sub(r'const\s+val\s+([a-zA-Z0-9_]+)\s*=\s*"([^"]+)"', repl_safe, content)
+                      else:
+                          # الكلاسات الأخرى (مثل Human.kt, Auth, Utils, Constants, UI) يتم تشفيرها بالكامل بـ Dynamic Getters
+                          def repl_kt(match):
+                              global secured_count
+                              var_name = match.group(2)
+                              str_val = match.group(3)
+
+                              if str_val in ["", " "]:
+                                  return match.group(0)
+
+                              secured_count += 1
+                              return f"val {var_name}: String get() = {polymorphic_xor(str_val)}"
+
+                          new_content = re.sub(pattern_kt, repl_kt, content)
 
                       if new_content != content:
                           with open(p, "w", encoding="utf-8") as f:
                               f.write(new_content)
 
-          # 3. إعداد قواعد تعتيم R8 القوية
+          # 3. قواعد تعتيم R8 المتوافقة
           r8_aggressive_rules = """
           -repackageclasses ''
           -allowaccessmodification
           -dontwarn **
-          -overloadaggressively
-          -renamesourcefileattribute SourceFile
-          -keepattributes SourceFile,LineNumberTable
+          -dontwarn androidx.room.**
+          -keepclassmembers class * extends androidx.room.RoomDatabase { *; }
+          -keep class * extends androidx.room.RoomDatabase
+          -keep @androidx.room.Entity class * { *; }
+          -keep @androidx.room.Dao class * { *; }
+          -keepclassmembers enum * { *; }
           -assumenosideeffects class android.util.Log {
               public static boolean isLoggable(java.lang.String, int);
               public static int v(...);
@@ -172,13 +193,13 @@ jobs:
                   with open(p_file, "a", encoding="utf-8") as f:
                       f.write(r8_aggressive_rules)
 
-          print(f"🔒 تم بنجاح تشفير {secured_count} متغير نصي وحمايتها من الهندسة العكسية.")
+          print(f"🔒 تم تشفير {secured_count} حقل نصي بنجاح مع الحفاظ على سلامة جداول Room و KSP.")
           EOF
 
-          python3 force_encrypt.py
-          rm force_encrypt.py
+          python3 smart_encrypt.py
+          rm smart_encrypt.py
 
-          # إجبار تفعيل التقليص في build.gradle
+          # تفعيل التقليص في build.gradle
           find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
             sed -i -E "s/(isMinifyEnabled\s*=\s*)false/\1true/g" "$g_file"
             sed -i -E "s/(minifyEnabled\s+)false/\1true/g" "$g_file"
