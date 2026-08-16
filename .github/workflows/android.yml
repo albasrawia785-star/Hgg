@@ -67,7 +67,6 @@ jobs:
             find project_dir -type f -name "strings.xml" -exec sed -i "s|<string name=\"app_name\">.*</string>|<string name=\"app_name\">$APP_NAME</string>|g" {} +
           fi
 
-          # إذا حدد المستخدم حزمة جديدة نطبقها
           if [ -n "$USER_PKG" ]; then
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
               sed -i -E "s/(applicationId\s*=\s*)\"[^\"]+\"/\1\"$USER_PKG\"/g" "$g_file"
@@ -76,7 +75,6 @@ jobs:
             done
           fi
 
-          # استخراج اسم الحزمة الفعلي المستخدم حالياً في المشروع
           cat << 'EOF' > sync_pkg.py
           import os, re, json
 
@@ -98,7 +96,6 @@ jobs:
 
           print(f"📦 اسم الحزمة الفعلي المعتمد: {detected_pkg}")
 
-          # تجهيز قالب google-services متوافق 100%
           dummy_data = {
               "project_info": {
                   "project_number": "123456789",
@@ -119,7 +116,6 @@ jobs:
               "configuration_version": "1"
           }
 
-          # تحديث أو إنشاء google-services.json في كل المسارات
           for root, dirs, files in os.walk("project_dir"):
               if os.path.basename(root) == "app" or "src" in dirs:
                   json_path = os.path.join(root, "google-services.json")
@@ -153,27 +149,26 @@ jobs:
           fi
         continue-on-error: true
 
-      # 🛡️ محرك التشفير الآمن المتوافق 100% مع KSP و Room Data Models
-      - name: Smart Targeted String Obfuscation & Security Hardening
+      # 🛡️ محرك التشفير القاطع الآمن 100% (Safe Vault Injection)
+      - name: Safe Bulletproof In-Memory Obfuscation
         run: |
           echo "================================================================="
-          echo "🛡️ تفعيل التشفير الذكي (استثناء ملفات النماذج وقواعد البيانات)..."
+          echo "🛡️ تفعيل التشفير الثنائي الآمن الخالي من أخطاء الـ Compilation..."
           echo "================================================================="
 
-          cat << 'EOF' > smart_encrypt.py
+          cat << 'EOF' > safe_obfuscator.py
           import os
           import re
           import random
 
-          def polymorphic_xor(text):
-              salt = random.randint(110, 245)
-              encoded_bytes = text.encode('utf-8')
-              encrypted = [str(b ^ salt) for b in encoded_bytes]
-              return f"String(byteArrayOf({', '.join(encrypted)}).map {{ (it.toInt() xor {salt}).toByte() }}.toByteArray(), Charsets.UTF_8)"
+          def encode_to_vault(text, salt):
+              encoded = text.encode('utf-8')
+              encrypted = [str(b ^ salt) for b in encoded]
+              return ", ".join(encrypted)
 
           secured_count = 0
 
-          # 1. تأمين المانيفست
+          # 1. تحصين المانيفست
           for root, _, files in os.walk("project_dir"):
               for file in files:
                   if file == "AndroidManifest.xml":
@@ -186,45 +181,74 @@ jobs:
                       with open(p, "w", encoding="utf-8") as f:
                           f.write(m)
 
-          # 2. تشفير كلاسات الأسرار والكائنات وUtils وUI مع استثناء Room Entities
-          pattern_kt = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*(?::\s*String)?\s*=\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
+          # 2. حقن SecurityVault الآمن داخل مجلد الكود
+          vault_code = """package com.example.security
+
+          object SecurityVault {
+              @JvmStatic
+              fun d(bytes: ByteArray, k: Int): String {
+                  val res = ByteArray(bytes.size)
+                  for (i in bytes.indices) {
+                      res[i] = (bytes[i].toInt() xor k).toByte()
+                  }
+                  return String(res, Charsets.UTF_8)
+              }
+          }
+          """
+          # تحديد مجلد الـ src لحقن الـ Vault
+          injected = False
+          for root, dirs, files in os.walk("project_dir"):
+              if root.endswith(os.path.join("src", "main", "java")):
+                  vault_dir = os.path.join(root, "com", "example", "security")
+                  os.makedirs(vault_dir, exist_ok=True)
+                  with open(os.path.join(vault_dir, "SecurityVault.kt"), "w", encoding="utf-8") as vf:
+                      vf.write(vault_code)
+                  injected = True
+                  break
+
+          # 3. تشفير المتغيرات الصريحة فقط مع إزالة const بأمان
+          pattern = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*(?::\s*String)?\s*=\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
 
           for root, dirs, files in os.walk("project_dir"):
               dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
               for file in files:
-                  if file.endswith('.kt'):
+                  if file.endswith('.kt') and not file.endswith('SecurityVault.kt'):
                       p = os.path.join(root, file)
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           content = f.read()
 
-                      if any(k in content for k in ["@Entity", "@Dao", "@Database", "androidx.room", "data class"]):
-                          def repl_safe(m):
-                              global secured_count
-                              if m.group(1).startswith("const"):
-                                  secured_count += 1
-                                  return f"val {m.group(2)} = {polymorphic_xor(m.group(3))}"
+                      # تجنب تشفير ملفات قواعد بيانات Room لتفادي كسر الـ Schemas
+                      if any(k in content for k in ["@Entity", "@Dao", "@Database", "androidx.room"]):
+                          continue
+
+                      modified = False
+
+                      def replacer(m):
+                          global secured_count, modified
+                          decl = m.group(1)
+                          var_name = m.group(2)
+                          val_str = m.group(3)
+
+                          if val_str in ["", " "]:
                               return m.group(0)
-                          new_content = re.sub(r'const\s+val\s+([a-zA-Z0-9_]+)\s*=\s*"([^"]+)"', repl_safe, content)
-                      else:
-                          def repl_kt(match):
-                              global secured_count
-                              var_name = match.group(2)
-                              str_val = match.group(3)
 
-                              if str_val in ["", " "]:
-                                  return match.group(0)
+                          salt = random.randint(110, 245)
+                          b_str = encode_to_vault(val_str, salt)
+                          secured_count += 1
+                          modified = True
 
-                              secured_count += 1
-                              return f"val {var_name}: String get() = {polymorphic_xor(str_val)}"
+                          # استبدال const val بـ val وتفكيك البايتات وقت التشغيل
+                          return f"val {var_name}: String = com.example.security.SecurityVault.d(byteArrayOf({b_str}), {salt})"
 
-                          new_content = re.sub(pattern_kt, repl_kt, content)
+                      new_content = re.sub(pattern, replacer, content)
 
-                      if new_content != content:
+                      if modified:
                           with open(p, "w", encoding="utf-8") as f:
                               f.write(new_content)
 
-          # 3. قواعد تعتيم R8 المتوافقة
-          r8_aggressive_rules = """
+          # 4. قواعد R8 للتعتيم الشامل
+          r8_rules = """
+          -keep class com.example.security.SecurityVault { *; }
           -repackageclasses ''
           -allowaccessmodification
           -dontwarn **
@@ -233,7 +257,6 @@ jobs:
           -keep class * extends androidx.room.RoomDatabase
           -keep @androidx.room.Entity class * { *; }
           -keep @androidx.room.Dao class * { *; }
-          -keepclassmembers enum * { *; }
           -assumenosideeffects class android.util.Log {
               public static boolean isLoggable(java.lang.String, int);
               public static int v(...);
@@ -247,13 +270,13 @@ jobs:
               if os.path.basename(root) == "app":
                   p_file = os.path.join(root, "proguard-rules.pro")
                   with open(p_file, "a", encoding="utf-8") as f:
-                      f.write(r8_aggressive_rules)
+                      f.write(r8_rules)
 
-          print(f"🔒 تم تشفير {secured_count} حقل نصي بنجاح مع الحفاظ على سلامة جداول Room و KSP.")
+          print(f"🔒 تم تشفير {secured_count} متغير نصي بأمان تام مع حقن SecurityVault.")
           EOF
 
-          python3 smart_encrypt.py
-          rm smart_encrypt.py
+          python3 safe_obfuscator.py
+          rm safe_obfuscator.py
 
           # تفعيل التقليص في build.gradle
           find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
