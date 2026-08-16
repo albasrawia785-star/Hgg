@@ -368,7 +368,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ تجميع الـ APK وتوقيعه إجبارياً باستخدام apksigner الرسمي (V1 + V2 + V3)
+      # ⚙️ توفير مفاتيح التوقيع وحقنها وتوزيعها وتوقيع الـ APK بـ apksigner
       - name: Build & Guaranteed Apksigner (V1, V2, V3 Signing)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
@@ -377,10 +377,16 @@ jobs:
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
 
-          # 🔑 1. توليد مفتاح التوقيع
+          # 🔑 1. توليد مفتاح التوقيع الشامل
           keytool -genkey -v -keystore universal.keystore -alias androidkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Secure, O=Android, C=US" || true
 
-          # 🔑 2. إيقاف أخطاء الـ Lint
+          # 🔑 2. نسخ المفتاح بكل الأسماء المحتملة في كافة مجلدات المشروع لمنع أي خطأ missing keystore
+          for k_name in "my-upload-key.jks" "release.keystore" "debug.keystore" "upload-keystore.jks" "key.jks" "keystore.jks" "my-release-key.jks"; do
+            cp -f universal.keystore "$k_name" 2>/dev/null || true
+            find "$GITHUB_WORKSPACE" -type d -exec cp -f universal.keystore "{}/$k_name" \; 2>/dev/null || true
+          done
+
+          # 🔑 3. حقن إعدادات التوقيع الاحتياطية وإيقاف أخطاء Lint
           cat << 'EOF' > fix_signing.py
           import os, re
 
@@ -390,6 +396,10 @@ jobs:
                       p = os.path.join(root, file)
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           c = f.read()
+
+                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.getByName\("release"\)', 'signingConfig = signingConfigs.getByName("debug")', c)
+                      c = re.sub(r'signingConfig\s+signingConfigs\.release', 'signingConfig signingConfigs.debug', c)
+                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.release', 'signingConfig = signingConfigs.debug', c)
 
                       c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
                       c = re.sub(r'checkReleaseBuilds\s+true', 'checkReleaseBuilds false', c)
@@ -407,7 +417,7 @@ jobs:
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
-          # 🔑 3. تنفيذ التجميع
+          # 🔑 4. تنفيذ التجميع
           if [ "$BUILD_TYPE" == "aab" ]; then
             ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
