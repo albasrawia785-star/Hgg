@@ -368,7 +368,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ إدارة مفاتيح التوقيع الذكية (المرفوعة أو المولدة) وبناء الحزمة
+      # ⚙️ إدارة وتوليد مفتاح التوقيع المضمون وبناء الحزمة
       - name: Build & Guaranteed Apksigner (V1, V2, V3 Signing)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
@@ -377,14 +377,21 @@ jobs:
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
 
-          # 🔑 1. التحقق من وجود مفتاح مرفوع من قبل المستخدم أو توليد مفتاح جديد
-          FOUND_KS=$(find "$GITHUB_WORKSPACE/uploads" "$GITHUB_WORKSPACE/project_dir" -maxdepth 3 -type f \( -name "*.keystore" -o -name "*.jks" \) 2>/dev/null | head -n 1)
+          # 🔑 1. فحص وجود مفتاح مرفوع مسبقاً وسليم الحجم
+          FOUND_KS=""
+          for candidate in $(find "$GITHUB_WORKSPACE/uploads" "$GITHUB_WORKSPACE/project_dir" -maxdepth 3 -type f \( -name "*.keystore" -o -name "*.jks" \) 2>/dev/null); do
+            if [ -s "$candidate" ]; then
+              FOUND_KS="$candidate"
+              break
+            fi
+          done
 
           if [ -n "$FOUND_KS" ]; then
-            echo "🔑 تم العثور على مفتاح توقيع مخصص مرفوع: $FOUND_KS"
+            echo "🔑 تم العثور على مفتاح توقيع مخصص سليم: $FOUND_KS"
             cp -f "$FOUND_KS" universal.keystore
           else
-            echo "✨ لم يتم إرفاق مفتاح توقيع مسبق، جاري توليد مفتاح مخصص وجديد..."
+            echo "✨ جاري توليد مفتاح توقيع جديد وموثق..."
+            rm -f universal.keystore
             keytool -genkey -v -keystore universal.keystore \
               -alias androidkey \
               -keyalg RSA \
@@ -392,10 +399,24 @@ jobs:
               -validity 10000 \
               -storepass "android" \
               -keypass "android" \
-              -dname "CN=Android Secure, O=Android, C=US" || true
+              -dname "CN=Android Secure, O=Android, C=US"
           fi
 
-          # 🔑 2. حفظ نسخة من المفتاح في مجلد العمل لرفعها في الـ Release
+          # التحقق الصارم من أن حجم المفتاح أكبر من الصفر
+          if [ ! -s universal.keystore ]; then
+            echo "⚠️ إعادة توليد المفتاح للتأكد من اكتمال حجمه..."
+            rm -f universal.keystore
+            keytool -genkey -v -keystore universal.keystore \
+              -alias androidkey \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "android" \
+              -keypass "android" \
+              -dname "CN=Android Secure, O=Android, C=US"
+          fi
+
+          # 🔑 2. حفظ نسخة موثوقة من المفتاح في المجلد الرئيسي لرفعه في الـ Release
           cp -f universal.keystore "$GITHUB_WORKSPACE/universal.keystore"
 
           # 🔑 3. توزيع ملف universal.keystore في المجلدات الجذرية ومجلد app
