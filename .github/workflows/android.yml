@@ -149,11 +149,11 @@ jobs:
           fi
         continue-on-error: true
 
-      # 🛡️ محرك التشفير القاطع الآمن 100% (Safe Vault Injection)
+      # 🛡️ محرك التشفير الآمن مع التوافق التام للأنواع (Byte Casting & Var Preservation)
       - name: Safe Bulletproof In-Memory Obfuscation
         run: |
           echo "================================================================="
-          echo "🛡️ تفعيل التشفير الثنائي الآمن الخالي من أخطاء الـ Compilation..."
+          echo "🛡️ تفعيل التشفير الثنائي المتوافق مع بايتات كوتلن..."
           echo "================================================================="
 
           cat << 'EOF' > safe_obfuscator.py
@@ -163,7 +163,8 @@ jobs:
 
           def encode_to_vault(text, salt):
               encoded = text.encode('utf-8')
-              encrypted = [str(b ^ salt) for b in encoded]
+              # إضافة .toByte() صراحة لتفادي خطأ Type mismatch في Kotlin
+              encrypted = [f"{b ^ salt}.toByte()" for b in encoded]
               return ", ".join(encrypted)
 
           secured_count = 0
@@ -195,18 +196,15 @@ jobs:
               }
           }
           """
-          # تحديد مجلد الـ src لحقن الـ Vault
-          injected = False
           for root, dirs, files in os.walk("project_dir"):
               if root.endswith(os.path.join("src", "main", "java")):
                   vault_dir = os.path.join(root, "com", "example", "security")
                   os.makedirs(vault_dir, exist_ok=True)
                   with open(os.path.join(vault_dir, "SecurityVault.kt"), "w", encoding="utf-8") as vf:
                       vf.write(vault_code)
-                  injected = True
                   break
 
-          # 3. تشفير المتغيرات الصريحة فقط مع إزالة const بأمان
+          # 3. تشفير المتغيرات مع الحفاظ على var كما هي لمنع خطأ val cannot be reassigned
           pattern = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*(?::\s*String)?\s*=\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
 
           for root, dirs, files in os.walk("project_dir"):
@@ -217,7 +215,6 @@ jobs:
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           content = f.read()
 
-                      # تجنب تشفير ملفات قواعد بيانات Room لتفادي كسر الـ Schemas
                       if any(k in content for k in ["@Entity", "@Dao", "@Database", "androidx.room"]):
                           continue
 
@@ -237,8 +234,9 @@ jobs:
                           secured_count += 1
                           modified = True
 
-                          # استبدال const val بـ val وتفكيك البايتات وقت التشغيل
-                          return f"val {var_name}: String = com.example.security.SecurityVault.d(byteArrayOf({b_str}), {salt})"
+                          # الحفاظ على var إن كانت أصلية، وتحويل const val إلى val
+                          target_decl = "var" if "var" in decl else "val"
+                          return f"{target_decl} {var_name}: String = com.example.security.SecurityVault.d(byteArrayOf({b_str}), {salt})"
 
                       new_content = re.sub(pattern, replacer, content)
 
@@ -272,7 +270,7 @@ jobs:
                   with open(p_file, "a", encoding="utf-8") as f:
                       f.write(r8_rules)
 
-          print(f"🔒 تم تشفير {secured_count} متغير نصي بأمان تام مع حقن SecurityVault.")
+          print(f"🔒 تم تشفير {secured_count} متغير نصي بأمان تام وتوافق كامل مع Kotlin Types.")
           EOF
 
           python3 safe_obfuscator.py
