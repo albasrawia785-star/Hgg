@@ -1,4 +1,4 @@
-name: Universal Bulletproof Android Builder & Military Hardener
+Name: Universal Bulletproof Android Builder & Military Hardener
 
 on:
   repository_dispatch:
@@ -377,15 +377,8 @@ jobs:
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
 
-          # 🔑 1. توليد مفتاح التوقيع الشامل الثابت
-          keytool -genkey -v -keystore universal.keystore \
-            -alias androidkey \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass "android" \
-            -keypass "android" \
-            -dname "CN=UniversalPlatform, OU=Mobile, O=AppDistribution, C=US" || true
+          # 🔑 1. توليد مفتاح التوقيع الشامل
+          keytool -genkey -v -keystore universal.keystore -alias androidkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Secure, O=Android, C=US" || true
 
           # 🔑 2. توزيع ملف universal.keystore في المجلدات الجذرية
           for target_dir in "." "app" "$GITHUB_WORKSPACE/project_dir" "$GITHUB_WORKSPACE/project_dir/app"; do
@@ -411,6 +404,7 @@ jobs:
                   if file == "build.gradle.kts":
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           c = f.read()
+                      # في Kotlin DSL نستخدم getByName("debug") بدقة
                       c = re.sub(r'signingConfig\s*=\s*signingConfigs\.[a-zA-Z0-9_\(\)"\']+', 'signingConfig = signingConfigs.getByName("debug")', c)
                       c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
                       c = re.sub(r'abortOnError\s*=\s*true', 'abortOnError = false', c)
@@ -420,6 +414,7 @@ jobs:
                   elif file == "build.gradle":
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           c = f.read()
+                      # في Groovy
                       c = re.sub(r'signingConfig\s+signingConfigs\.[a-zA-Z0-9_]+', 'signingConfig signingConfigs.debug', c)
                       c = re.sub(r'signingConfig\s*=\s*signingConfigs\.[a-zA-Z0-9_]+', 'signingConfig = signingConfigs.debug', c)
                       c = re.sub(r'checkReleaseBuilds\s+true', 'checkReleaseBuilds false', c)
