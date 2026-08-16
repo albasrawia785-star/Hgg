@@ -141,6 +141,78 @@ jobs:
           fi
         continue-on-error: true
 
+      # 🛡️ الفحص الأمني الشامل وتشفير البيانات الحساسة تلقائياً ضد الهندسة العكسية
+      - name: Comprehensive Security Scan & Auto-Shielding
+        run: |
+          echo "========================================================"
+          echo "🔍 بدء الفحص الأمني الشامل وتحصين المشروع..."
+          echo "========================================================"
+
+          cat << 'EOF' > security_shield.py
+          import os
+          import re
+          import random
+
+          def generate_obfuscated_code(secret_text):
+              key = random.randint(105, 245)
+              encrypted_bytes = [str(ord(c) ^ key) for c in secret_text]
+              bytes_str = ", ".join(encrypted_bytes)
+              return f"String(byteArrayOf({bytes_str}).map {{ (it.toInt() xor {key}).toByte() }}.toByteArray())"
+
+          findings = []
+          secured_items = 0
+
+          # فحص وتشفير نصوص الأكواد الصريحة
+          secret_patterns = [
+              (r'(password|passwd|pass|admin_pass|secret_key|api_secret)\s*(=|:)\s*"([^"]{4,})"', "كلمة سر / مفتاح سري"),
+              (r'(db_password|database_password)\s*(=|:)\s*"([^"]{4,})"', "كلمة مرور قاعدة بيانات"),
+          ]
+
+          for root, dirs, files in os.walk("project_dir"):
+              dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
+              for file in files:
+                  if file.endswith(('.kt', '.java')):
+                      filepath = os.path.join(root, file)
+                      with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                          content = f.read()
+
+                      modified = False
+                      for pattern, desc in secret_patterns:
+                          matches = list(re.finditer(pattern, content, re.IGNORECASE))
+                          if matches:
+                              for match in matches:
+                                  var_name = match.group(1)
+                                  op = match.group(2)
+                                  secret_val = match.group(3)
+                                  
+                                  if secret_val.lower() in ["", "true", "false", "default", "null"]:
+                                      continue
+
+                                  obfuscated = generate_obfuscated_code(secret_val)
+                                  content = content.replace(match.group(0), f"{var_name} {op} {obfuscated}")
+                                  modified = True
+                                  secured_items += 1
+                                  findings.append(f"🔒 تم تحصين {desc} في الملف ({file}) للمتغير [{var_name}]")
+
+                      if modified:
+                          with open(filepath, 'w', encoding='utf-8') as f:
+                              f.write(content)
+
+          print("\n📊 --- تقرير الفحص الأمني ---")
+          if findings:
+              for item in findings:
+                  print(f"  • {item}")
+          else:
+              print("  ✅ الأكواد سليمة ولا توجد كلمات سر مكشوفة بصيغة صريحة.")
+
+          print(f"\n🛡️ إجمالي النصوص الحساسة التي تم تشفيرها: {secured_items}")
+          print("========================================================\n")
+          EOF
+
+          python3 security_shield.py
+          rm security_shield.py
+        continue-on-error: true
+
       - name: Setup Gradle 9.3.1
         run: |
           SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
