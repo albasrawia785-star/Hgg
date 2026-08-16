@@ -92,9 +92,9 @@ jobs:
                   break
 
           if not detected_pkg:
-              detected_pkg = "com.aistudio.restaurantpos.vmdjqk"
+              detected_pkg = "com.universal.android.app"
 
-          print(f"📦 اسم الحزمة الفعلي المعتمد: {detected_pkg}")
+          print(f"📦 اسم الحزمة المعتمد: {detected_pkg}")
 
           dummy_data = {
               "project_info": {
@@ -149,26 +149,26 @@ jobs:
           fi
         continue-on-error: true
 
-      # 🛡️ محرك التشفير الآمن والتحصين الشامل
-      - name: Precise & Bulletproof Code Obfuscation
+      # 🛡️ المحرك الشامل لتحصين وتشفير أي تطبيق مستقبلي
+      - name: Universal Dynamic Obfuscation & Security Engine
         run: |
           echo "================================================================="
-          echo "🛡️ تفعيل التشفير الذكي والدقيق للبيانات الحساسة والأسرار..."
+          echo "🛡️ تفعيل المحرك الشامل للتحصين والتشفير الديناميكي..."
           echo "================================================================="
 
-          cat << 'EOF' > smart_hardener.py
+          cat << 'EOF' > universal_hardener.py
           import os
           import re
           import random
 
-          def encode_to_vault(text, salt):
+          def encode_bytes(text, salt):
               encoded = text.encode('utf-8')
               encrypted = [f"{b ^ salt}.toByte()" for b in encoded]
               return ", ".join(encrypted)
 
           secured_count = 0
 
-          # 1. تحصين المانيفست
+          # 1. تحصين ملفات المانيفست في المشروع بالكامل
           for root, _, files in os.walk("project_dir"):
               for file in files:
                   if file == "AndroidManifest.xml":
@@ -181,60 +181,91 @@ jobs:
                       with open(p, "w", encoding="utf-8") as f:
                           f.write(m)
 
-          # 2. حقن كائن التشفير والحماية الذاتية SecurityVault
-          vault_code = """package com.example.utils
+          # 2. كشف الحزمة الجذرية الأساسية للمشروع
+          root_package = "com.universal.security"
+          for root, dirs, files in os.walk("project_dir"):
+              for file in files:
+                  if file.endswith('.kt') or file.endswith('.java'):
+                      p = os.path.join(root, file)
+                      with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                          first_lines = "".join([f.readline() for _ in range(5)])
+                      m = re.search(r'package\s+([a-zA-Z0-9_.]+)', first_lines)
+                      if m:
+                          parts = m.group(1).split('.')
+                          if len(parts) >= 2:
+                              root_package = f"{parts[0]}.{parts[1]}.security"
+                              break
+              if root_package != "com.universal.security":
+                  break
+
+          vault_class_code = f"""package {root_package}
 
           import android.os.Process
           import java.io.BufferedReader
           import java.io.FileReader
 
-          object SecurityVault {
+          object AppSecurityVault {{
 
-              init {
-                  checkDebugger()
-              }
+              init {{
+                  protectProcess()
+              }}
 
               @JvmStatic
-              fun d(bytes: ByteArray, k: Int): String {
-                  val res = ByteArray(bytes.size)
-                  for (i in bytes.indices) {
-                      res[i] = (bytes[i].toInt() xor k).toByte()
-                  }
-                  return String(res, Charsets.UTF_8)
-              }
+              fun decrypt(b: ByteArray, k: Int): String {{
+                  val r = ByteArray(b.size)
+                  for (i in b.indices) {{
+                      r[i] = (b[i].toInt() xor k).toByte()
+                  }}
+                  return String(r, Charsets.UTF_8)
+              }}
 
-              private fun checkDebugger() {
-                  try {
+              private fun protectProcess() {{
+                  try {{
                       val reader = BufferedReader(FileReader("/proc/self/status"))
                       var line: String?
-                      while (reader.readLine().also { line = it } != null) {
-                          if (line!!.startsWith("TracerPid:")) {
+                      while (reader.readLine().also {{ line = it }} != null) {{
+                          if (line!!.startsWith("TracerPid:")) {{
                               val pid = line!!.substring(10).trim().toInt()
-                              if (pid != 0) {
+                              if (pid != 0) {{
                                   reader.close()
                                   Process.killProcess(Process.myPid())
                                   System.exit(0)
-                              }
-                          }
-                      }
+                              }}
+                          }}
+                      }}
                       reader.close()
-                  } catch (ignored: Exception) {}
-              }
-          }
+                  }} catch (ignored: Exception) {{}}
+              }}
+          }}
           """
-          for root, dirs, files in os.walk("project_dir"):
-              if root.endswith(os.path.join("src", "main", "java", "com", "example", "utils")):
-                  with open(os.path.join(root, "SecurityVault.kt"), "w", encoding="utf-8") as vf:
-                      vf.write(vault_code)
-                  break
 
-          # 3. نمط لاستهداف المتغيرات الحساسة الصريحة
-          secret_var_pattern = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]*(?:PASSWORD|PASSWD|PASS|SECRET|TOKEN|API_KEY|KEY|ADMIN|AUTH|PHONE|USERNAME|USER|CREDENTIAL|PIN|RESTAURANT)[a-zA-Z0-9_]*)\s*(?::\s*String)?\s*=\s*"([^"$\r\n\\]+)"'
+          # 3. حقن AppSecurityVault داخل مجلدات السورس كود تلقائياً
+          injected = False
+          pkg_subpath = root_package.replace('.', os.sep)
+          for root, dirs, files in os.walk("project_dir"):
+              if root.endswith(os.path.join("src", "main", "java")) or root.endswith(os.path.join("src", "main", "kotlin")):
+                  target_dir = os.path.join(root, pkg_subpath)
+                  os.makedirs(target_dir, exist_ok=True)
+                  with open(os.path.join(target_dir, "AppSecurityVault.kt"), "w", encoding="utf-8") as vf:
+                      vf.write(vault_class_code)
+                  injected = True
+
+          if not injected:
+              for root, dirs, files in os.walk("project_dir"):
+                  if "src" in dirs:
+                      target_dir = os.path.join(root, "src", "main", "java", pkg_subpath)
+                      os.makedirs(target_dir, exist_ok=True)
+                      with open(os.path.join(target_dir, "AppSecurityVault.kt"), "w", encoding="utf-8") as vf:
+                          vf.write(vault_class_code)
+                      break
+
+          # 4. التشفير الشامل للمتغيرات الحساسة
+          secret_var_pattern = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]*(?:PASSWORD|PASSWD|PASS|SECRET|TOKEN|API_KEY|KEY|ADMIN|AUTH|PHONE|USERNAME|USER|CREDENTIAL|PIN|RESTAURANT|SHOP|DATABASE)[a-zA-Z0-9_]*)\s*(?::\s*String)?\s*=\s*"([^"$\r\n\\]+)"'
 
           for root, dirs, files in os.walk("project_dir"):
               dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
               for file in files:
-                  if file.endswith('.kt') and not file.endswith('SecurityVault.kt'):
+                  if file.endswith('.kt') and not file.endswith('AppSecurityVault.kt'):
                       p = os.path.join(root, file)
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           content = f.read()
@@ -254,12 +285,12 @@ jobs:
                               return m.group(0)
 
                           salt = random.randint(110, 245)
-                          b_str = encode_to_vault(val_str, salt)
+                          b_str = encode_bytes(val_str, salt)
                           secured_count += 1
                           modified = True
 
                           target_decl = "var" if "var" in decl else "val"
-                          return f"{target_decl} {var_name}: String = com.example.utils.SecurityVault.d(byteArrayOf({b_str}), {salt})"
+                          return f"{target_decl} {var_name}: String = {root_package}.AppSecurityVault.decrypt(byteArrayOf({b_str}), {salt})"
 
                       new_content = re.sub(secret_var_pattern, replacer, content)
 
@@ -267,28 +298,28 @@ jobs:
                           with open(p, "w", encoding="utf-8") as f:
                               f.write(new_content)
 
-          # 4. قواعد R8 الشاملة والمتوافقة 100%
-          r8_rules = """
-          -keep class com.example.utils.SecurityVault { *; }
+          # 5. قواعد R8 الشاملة والمتوافقة مع كافة المكتبات
+          r8_rules = f"""
+          -keep class {root_package}.AppSecurityVault {{ *; }}
           -repackageclasses ''
           -allowaccessmodification
           -dontwarn **
-          -dontwarn androidx.room.**
-          -keepclassmembers class * extends androidx.room.RoomDatabase { *; }
+          -dontwarn androidx.**
+          -keepclassmembers class * extends androidx.room.RoomDatabase {{ *; }}
           -keep class * extends androidx.room.RoomDatabase
-          -keep @androidx.room.Entity class * { *; }
-          -keep @androidx.room.Dao class * { *; }
-          -keep class androidx.compose.** { *; }
-          -keep class androidx.activity.** { *; }
-          -keep class androidx.fragment.app.** { *; }
-          -assumenosideeffects class android.util.Log {
+          -keep @androidx.room.Entity class * {{ *; }}
+          -keep @androidx.room.Dao class * {{ *; }}
+          -keep class androidx.compose.** {{ *; }}
+          -keep class androidx.activity.** {{ *; }}
+          -keep class androidx.fragment.app.** {{ *; }}
+          -assumenosideeffects class android.util.Log {{
               public static boolean isLoggable(java.lang.String, int);
               public static int v(...);
               public static int d(...);
               public static int i(...);
               public static int w(...);
               public static int e(...);
-          }
+          }}
           """
           for root, dirs, files in os.walk("project_dir"):
               if os.path.basename(root) == "app":
@@ -296,11 +327,11 @@ jobs:
                   with open(p_file, "a", encoding="utf-8") as f:
                       f.write(r8_rules)
 
-          print(f"🔒 تم تشفير {secured_count} حقل حساس صريح بنجاح.")
+          print(f"🔒 تم تحصين المشروع بنجاح وتشفير {secured_count} حقل حساس عبر الحزمة: {root_package}")
           EOF
 
-          python3 smart_hardener.py
-          rm smart_hardener.py
+          python3 universal_hardener.py
+          rm universal_hardener.py
 
           # تفعيل التقليص في build.gradle
           find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
@@ -387,10 +418,8 @@ jobs:
             RAW_APK=$(find . -path "*/build/outputs/apk/*/*.apk" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.apk"
             
-            # تحديد أدوات Android SDK الرسمية للتوقيع والمحاذاة
             BUILD_TOOLS_DIR=$(find /usr/local/lib/android/sdk/build-tools -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
             
-            # محاذاة وتوقيع الـ APK بـ V1 و V2 و V3 رسمياً
             if [ -n "$BUILD_TOOLS_DIR" ] && [ -f "$BUILD_TOOLS_DIR/apksigner" ]; then
               echo "✍️ توقيع الحزمة رسمياً عبر apksigner (V1, V2, V3)..."
               "$BUILD_TOOLS_DIR/zipalign" -p -f -v 4 "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME" || cp "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME"
