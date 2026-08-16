@@ -149,7 +149,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # 🛡️ المحرك الشامل لتحصين وتشفير أي تطبيق مستقبلي
+      # 🛡️ المحرك الشامل لتحصين وتشفير أي تطبيق
       - name: Universal Dynamic Obfuscation & Security Engine
         run: |
           echo "================================================================="
@@ -298,7 +298,7 @@ jobs:
                           with open(p, "w", encoding="utf-8") as f:
                               f.write(new_content)
 
-          # 5. قواعد R8 الشاملة والمتوافقة مع كافة المكتبات
+          # 5. قواعد R8 الشاملة والمتوافقة
           r8_rules = f"""
           -keep class {root_package}.AppSecurityVault {{ *; }}
           -repackageclasses ''
@@ -368,7 +368,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ حقن وتوليد مفاتيح التوقيع وإعدادات Gradle المضمونة 100%
+      # ⚙️ توفير مفاتيح التوقيع وحقن التوافق التام لـ Kotlin DSL و Groovy
       - name: Build & Guaranteed Apksigner (V1, V2, V3 Signing)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
@@ -380,7 +380,7 @@ jobs:
           # 🔑 1. توليد مفتاح التوقيع الشامل
           keytool -genkey -v -keystore universal.keystore -alias androidkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Secure, O=Android, C=US" || true
 
-          # 🔑 2. توزيع ملف universal.keystore وجميع أسمائه البديلة في المجلدات الجذرية
+          # 🔑 2. توزيع ملف universal.keystore في المجلدات الجذرية
           for target_dir in "." "app" "$GITHUB_WORKSPACE/project_dir" "$GITHUB_WORKSPACE/project_dir/app"; do
             if [ -d "$target_dir" ]; then
               for k_name in "universal.keystore" "my-upload-key.jks" "release.keystore" "debug.keystore" "upload-keystore.jks" "key.jks" "keystore.jks" "my-release-key.jks"; do
@@ -392,23 +392,7 @@ jobs:
           # 🧹 تنظيف وقائي لحذف أي ملفات keystore داخل مجلدات الموارد
           find . -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" \) -exec rm -f {} + 2>/dev/null || true
 
-          # 🔑 3. تغذية gradle.properties ببيانات التوقيع الاحتياطية لجميع المتغيرات الشائعة
-          cat << 'EOF' >> gradle.properties
-          RELEASE_STORE_FILE=universal.keystore
-          RELEASE_STORE_PASSWORD=android
-          RELEASE_KEY_ALIAS=androidkey
-          RELEASE_KEY_PASSWORD=android
-          MYAPP_RELEASE_STORE_FILE=universal.keystore
-          MYAPP_RELEASE_STORE_PASSWORD=android
-          MYAPP_RELEASE_KEY_ALIAS=androidkey
-          MYAPP_RELEASE_KEY_PASSWORD=android
-          android.injected.signing.store.file=universal.keystore
-          android.injected.signing.store.password=android
-          android.injected.signing.key.alias=androidkey
-          android.injected.signing.key.password=android
-          EOF
-
-          # 🔑 4. إعادة توجيه signingConfig في كافة ملفات Gradle إلى Debug لتمرير مرحلة Package بنجاح تام
+          # 🔑 3. حقن التوقيع المتوافق نحوياً مع كل صيغة بدقة
           cat << 'EOF' > fix_signing.py
           import os, re
 
@@ -416,20 +400,27 @@ jobs:
               if "build" in dirs:
                   dirs.remove("build")
               for file in files:
-                  if file in ["build.gradle", "build.gradle.kts"]:
-                      p = os.path.join(root, file)
+                  p = os.path.join(root, file)
+                  if file == "build.gradle.kts":
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           c = f.read()
-
-                      # تحويل توقيع الـ release إلى debug داخل ملفات Gradle لتفادي أخطاء الحقول المفقودة
-                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.(getByName\(["\']release["\']\)|release)', 'signingConfig = signingConfigs.debug', c)
-                      c = re.sub(r'signingConfig\s+signingConfigs\.release', 'signingConfig signingConfigs.debug', c)
-
+                      # في Kotlin DSL نستخدم getByName("debug") بدقة
+                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.[a-zA-Z0-9_\(\)"\']+', 'signingConfig = signingConfigs.getByName("debug")', c)
                       c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
-                      c = re.sub(r'checkReleaseBuilds\s+true', 'checkReleaseBuilds false', c)
                       c = re.sub(r'abortOnError\s*=\s*true', 'abortOnError = false', c)
-                      c = re.sub(r'abortOnError\s+true', 'abortOnError false', c)
+                      with open(p, "w", encoding="utf-8") as f:
+                          f.write(c)
 
+                  elif file == "build.gradle":
+                      with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                          c = f.read()
+                      # في Groovy
+                      c = re.sub(r'signingConfig\s+signingConfigs\.[a-zA-Z0-9_]+', 'signingConfig signingConfigs.debug', c)
+                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.[a-zA-Z0-9_]+', 'signingConfig = signingConfigs.debug', c)
+                      c = re.sub(r'checkReleaseBuilds\s+true', 'checkReleaseBuilds false', c)
+                      c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
+                      c = re.sub(r'abortOnError\s+true', 'abortOnError false', c)
+                      c = re.sub(r'abortOnError\s*=\s*true', 'abortOnError = false', c)
                       with open(p, "w", encoding="utf-8") as f:
                           f.write(c)
           EOF
@@ -441,7 +432,7 @@ jobs:
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
-          # 🔑 5. تنفيذ التجميع
+          # 🔑 4. تنفيذ التجميع
           if [ "$BUILD_TYPE" == "aab" ]; then
             ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
