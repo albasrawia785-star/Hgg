@@ -368,16 +368,18 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ إدارة وتوليد مفتاح التوقيع المضمون وبناء الحزمة
+      # ⚙️ إدارة وتوليد مفتاح التوقيع بصيغة PKCS12 المعتمدة وبناء الحزمة
       - name: Build & Guaranteed Apksigner (V1, V2, V3 Signing)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
         run: |
           SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
-          cd "$ROOT_DIR"
 
-          # 🔑 1. فحص وجود مفتاح مرفوع مسبقاً وسليم الحجم
+          # 🔑 1. تجهيز المفتاح في المسار المطلق الرئيسي أولاً
+          KEY_PATH="$GITHUB_WORKSPACE/universal.keystore"
+          rm -f "$KEY_PATH"
+
           FOUND_KS=""
           for candidate in $(find "$GITHUB_WORKSPACE/uploads" "$GITHUB_WORKSPACE/project_dir" -maxdepth 3 -type f \( -name "*.keystore" -o -name "*.jks" \) 2>/dev/null); do
             if [ -s "$candidate" ]; then
@@ -388,50 +390,50 @@ jobs:
 
           if [ -n "$FOUND_KS" ]; then
             echo "🔑 تم العثور على مفتاح توقيع مخصص سليم: $FOUND_KS"
-            cp -f "$FOUND_KS" universal.keystore
+            cp -f "$FOUND_KS" "$KEY_PATH"
           else
-            echo "✨ جاري توليد مفتاح توقيع جديد وموثق..."
-            rm -f universal.keystore
-            keytool -genkey -v -keystore universal.keystore \
+            echo "✨ جاري توليد مفتاح توقيع موثق بصيغة PKCS12 القياسية..."
+            keytool -genkeypair -v -keystore "$KEY_PATH" \
               -alias androidkey \
               -keyalg RSA \
               -keysize 2048 \
               -validity 10000 \
+              -storetype PKCS12 \
               -storepass "android" \
               -keypass "android" \
               -dname "CN=Android Secure, O=Android, C=US"
           fi
 
-          # التحقق الصارم من أن حجم المفتاح أكبر من الصفر
-          if [ ! -s universal.keystore ]; then
+          # التحقق من أن حجم الملف أكبر من الصفر
+          if [ ! -s "$KEY_PATH" ]; then
             echo "⚠️ إعادة توليد المفتاح للتأكد من اكتمال حجمه..."
-            rm -f universal.keystore
-            keytool -genkey -v -keystore universal.keystore \
+            rm -f "$KEY_PATH"
+            keytool -genkeypair -v -keystore "$KEY_PATH" \
               -alias androidkey \
               -keyalg RSA \
               -keysize 2048 \
               -validity 10000 \
+              -storetype PKCS12 \
               -storepass "android" \
               -keypass "android" \
               -dname "CN=Android Secure, O=Android, C=US"
           fi
 
-          # 🔑 2. حفظ نسخة موثوقة من المفتاح في المجلد الرئيسي لرفعه في الـ Release
-          cp -f universal.keystore "$GITHUB_WORKSPACE/universal.keystore"
-
-          # 🔑 3. توزيع ملف universal.keystore في المجلدات الجذرية ومجلد app
-          for target_dir in "." "app" "$GITHUB_WORKSPACE/project_dir" "$GITHUB_WORKSPACE/project_dir/app"; do
+          # 🔑 2. توزيع المفتاح إلى كافة المجلدات
+          for target_dir in "$ROOT_DIR" "$ROOT_DIR/app" "$GITHUB_WORKSPACE/project_dir" "$GITHUB_WORKSPACE/project_dir/app"; do
             if [ -d "$target_dir" ]; then
               for k_name in "universal.keystore" "my-upload-key.jks" "release.keystore" "debug.keystore" "upload-keystore.jks" "key.jks" "keystore.jks" "my-release-key.jks"; do
-                cp -f universal.keystore "$target_dir/$k_name" 2>/dev/null || true
+                cp -f "$KEY_PATH" "$target_dir/$k_name" 2>/dev/null || true
               done
             fi
           done
 
-          # 🧹 تنظيف وقائي لحذف أي ملفات keystore داخل مجلدات الموارد
-          find . -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" \) -exec rm -f {} + 2>/dev/null || true
+          # 🧹 تنظيف وقائي لحذف أي مفاتيح تسربت لمجلدات الموارد res
+          find "$GITHUB_WORKSPACE/project_dir" -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" \) -exec rm -f {} + 2>/dev/null || true
 
-          # 🔑 4. حقن التوقيع المتوافق نحوياً مع كل صيغة بدقة
+          cd "$ROOT_DIR"
+
+          # 🔑 3. حقن التوقيع المتوافق نحوياً
           cat << 'EOF' > fix_signing.py
           import os, re
 
@@ -469,7 +471,7 @@ jobs:
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
-          # 🔑 5. تنفيذ التجميع
+          # 🔑 4. تنفيذ التجميع
           if [ "$BUILD_TYPE" == "aab" ]; then
             ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
@@ -482,11 +484,11 @@ jobs:
             
             BUILD_TOOLS_DIR=$(find /usr/local/lib/android/sdk/build-tools -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
             
-            # توقيع الحزمة رسمياً بـ apksigner مع تفعيل V1 و V2 و V3
+            # توقيع الحزمة رسمياً بـ apksigner مع التوافق التام لـ PKCS12
             if [ -n "$BUILD_TOOLS_DIR" ] && [ -f "$BUILD_TOOLS_DIR/apksigner" ]; then
               echo "✍️ توقيع الحزمة رسمياً عبر apksigner (V1, V2, V3)..."
               "$BUILD_TOOLS_DIR/zipalign" -p -f -v 4 "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME" || cp "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME"
-              "$BUILD_TOOLS_DIR/apksigner" sign --ks universal.keystore --ks-key-alias androidkey --ks-pass pass:android --key-pass pass:android --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true "$GITHUB_WORKSPACE/$FINAL_NAME"
+              "$BUILD_TOOLS_DIR/apksigner" sign --ks "$KEY_PATH" --ks-key-alias androidkey --ks-pass pass:android --key-pass pass:android --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true "$GITHUB_WORKSPACE/$FINAL_NAME"
               "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$GITHUB_WORKSPACE/$FINAL_NAME" || true
             else
               cp "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME"
@@ -494,7 +496,7 @@ jobs:
           fi
 
           echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
-          echo "KEYSTORE_ASSET=$GITHUB_WORKSPACE/universal.keystore" >> $GITHUB_ENV
+          echo "KEYSTORE_ASSET=$KEY_PATH" >> $GITHUB_ENV
 
       - name: Extract Exact Failure Cause
         if: failure()
