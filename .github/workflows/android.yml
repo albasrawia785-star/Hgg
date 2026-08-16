@@ -368,7 +368,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ توفير مفاتيح التوقيع وحقن التوافق التام لـ Kotlin DSL و Groovy
+      # ⚙️ إدارة مفاتيح التوقيع الذكية (المرفوعة أو المولدة) وبناء الحزمة
       - name: Build & Guaranteed Apksigner (V1, V2, V3 Signing)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
@@ -377,10 +377,28 @@ jobs:
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
 
-          # 🔑 1. توليد مفتاح التوقيع الشامل
-          keytool -genkey -v -keystore universal.keystore -alias androidkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Secure, O=Android, C=US" || true
+          # 🔑 1. التحقق من وجود مفتاح مرفوع من قبل المستخدم أو توليد مفتاح جديد
+          FOUND_KS=$(find "$GITHUB_WORKSPACE/uploads" "$GITHUB_WORKSPACE/project_dir" -maxdepth 3 -type f \( -name "*.keystore" -o -name "*.jks" \) 2>/dev/null | head -n 1)
 
-          # 🔑 2. توزيع ملف universal.keystore في المجلدات الجذرية
+          if [ -n "$FOUND_KS" ]; then
+            echo "🔑 تم العثور على مفتاح توقيع مخصص مرفوع: $FOUND_KS"
+            cp -f "$FOUND_KS" universal.keystore
+          else
+            echo "✨ لم يتم إرفاق مفتاح توقيع مسبق، جاري توليد مفتاح مخصص وجديد..."
+            keytool -genkey -v -keystore universal.keystore \
+              -alias androidkey \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "android" \
+              -keypass "android" \
+              -dname "CN=Android Secure, O=Android, C=US" || true
+          fi
+
+          # 🔑 2. حفظ نسخة من المفتاح في مجلد العمل لرفعها في الـ Release
+          cp -f universal.keystore "$GITHUB_WORKSPACE/universal.keystore"
+
+          # 🔑 3. توزيع ملف universal.keystore في المجلدات الجذرية ومجلد app
           for target_dir in "." "app" "$GITHUB_WORKSPACE/project_dir" "$GITHUB_WORKSPACE/project_dir/app"; do
             if [ -d "$target_dir" ]; then
               for k_name in "universal.keystore" "my-upload-key.jks" "release.keystore" "debug.keystore" "upload-keystore.jks" "key.jks" "keystore.jks" "my-release-key.jks"; do
@@ -392,7 +410,7 @@ jobs:
           # 🧹 تنظيف وقائي لحذف أي ملفات keystore داخل مجلدات الموارد
           find . -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" \) -exec rm -f {} + 2>/dev/null || true
 
-          # 🔑 3. حقن التوقيع المتوافق نحوياً مع كل صيغة بدقة
+          # 🔑 4. حقن التوقيع المتوافق نحوياً مع كل صيغة بدقة
           cat << 'EOF' > fix_signing.py
           import os, re
 
@@ -404,7 +422,6 @@ jobs:
                   if file == "build.gradle.kts":
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           c = f.read()
-                      # في Kotlin DSL نستخدم getByName("debug") بدقة
                       c = re.sub(r'signingConfig\s*=\s*signingConfigs\.[a-zA-Z0-9_\(\)"\']+', 'signingConfig = signingConfigs.getByName("debug")', c)
                       c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
                       c = re.sub(r'abortOnError\s*=\s*true', 'abortOnError = false', c)
@@ -414,7 +431,6 @@ jobs:
                   elif file == "build.gradle":
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           c = f.read()
-                      # في Groovy
                       c = re.sub(r'signingConfig\s+signingConfigs\.[a-zA-Z0-9_]+', 'signingConfig signingConfigs.debug', c)
                       c = re.sub(r'signingConfig\s*=\s*signingConfigs\.[a-zA-Z0-9_]+', 'signingConfig = signingConfigs.debug', c)
                       c = re.sub(r'checkReleaseBuilds\s+true', 'checkReleaseBuilds false', c)
@@ -432,7 +448,7 @@ jobs:
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
-          # 🔑 4. تنفيذ التجميع
+          # 🔑 5. تنفيذ التجميع
           if [ "$BUILD_TYPE" == "aab" ]; then
             ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
@@ -457,6 +473,7 @@ jobs:
           fi
 
           echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
+          echo "KEYSTORE_ASSET=$GITHUB_WORKSPACE/universal.keystore" >> $GITHUB_ENV
 
       - name: Extract Exact Failure Cause
         if: failure()
@@ -474,6 +491,7 @@ jobs:
           name: "Build ${{ github.event.client_payload.build_id }}"
           files: |
             ${{ env.FINAL_ASSET }}
+            ${{ env.KEYSTORE_ASSET }}
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -488,7 +506,7 @@ jobs:
           git checkout main 2>/dev/null || git checkout master 2>/dev/null || true
           git reset --hard origin/HEAD 2>/dev/null || true
           if [ -d "uploads" ]; then find uploads -type f -not -name ".gitkeep" -exec git rm -f {} + 2>/dev/null || true; fi
-          find . -maxdepth 1 -type f \( -name "*.zip" -o -name "*.png" \) -exec git rm -f {} + 2>/dev/null || true
+          find . -maxdepth 1 -type f \( -name "*.zip" -o -name "*.png" -o -name "*.keystore" -o -name "*.jks" \) -exec git rm -f {} + 2>/dev/null || true
           mkdir -p uploads && touch uploads/.gitkeep && git add uploads/.gitkeep 2>/dev/null || true
           if ! git diff --cached --quiet; then
             git commit -m "Auto-clean uploads [skip ci]"
