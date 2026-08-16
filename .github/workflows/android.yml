@@ -368,7 +368,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ توفير مفاتيح التوقيع وحقنها وتوزيعها وتوقيع الـ APK بـ apksigner
+      # ⚙️ توفير مفاتيح التوقيع في المجلدات الجذرية فقط وبناء الـ APK
       - name: Build & Guaranteed Apksigner (V1, V2, V3 Signing)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
@@ -380,13 +380,17 @@ jobs:
           # 🔑 1. توليد مفتاح التوقيع الشامل
           keytool -genkey -v -keystore universal.keystore -alias androidkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Secure, O=Android, C=US" || true
 
-          # 🔑 2. نسخ المفتاح بكل الأسماء المحتملة في كافة مجلدات المشروع لمنع أي خطأ missing keystore
+          # 🔑 2. نسخ المفتاح في المجلدات الجذرية للمشروع فقط (منع وضعه في مجلدات res)
           for k_name in "my-upload-key.jks" "release.keystore" "debug.keystore" "upload-keystore.jks" "key.jks" "keystore.jks" "my-release-key.jks"; do
             cp -f universal.keystore "$k_name" 2>/dev/null || true
-            find "$GITHUB_WORKSPACE" -type d -exec cp -f universal.keystore "{}/$k_name" \; 2>/dev/null || true
+            if [ -d "app" ]; then cp -f universal.keystore "app/$k_name" 2>/dev/null || true; fi
+            if [ -d "$GITHUB_WORKSPACE/project_dir" ]; then cp -f universal.keystore "$GITHUB_WORKSPACE/project_dir/$k_name" 2>/dev/null || true; fi
           done
 
-          # 🔑 3. حقن إعدادات التوقيع الاحتياطية وإيقاف أخطاء Lint
+          # 🧹 تنظيف وقائي لحذف أي ملفات keystore دخلت مجلدات الموارد
+          find . -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" \) -exec rm -f {} + 2>/dev/null || true
+
+          # 🔑 3. إيقاف أخطاء الـ Lint
           cat << 'EOF' > fix_signing.py
           import os, re
 
@@ -396,10 +400,6 @@ jobs:
                       p = os.path.join(root, file)
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           c = f.read()
-
-                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.getByName\("release"\)', 'signingConfig = signingConfigs.getByName("debug")', c)
-                      c = re.sub(r'signingConfig\s+signingConfigs\.release', 'signingConfig signingConfigs.debug', c)
-                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.release', 'signingConfig = signingConfigs.debug', c)
 
                       c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
                       c = re.sub(r'checkReleaseBuilds\s+true', 'checkReleaseBuilds false', c)
