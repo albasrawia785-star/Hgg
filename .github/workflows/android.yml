@@ -141,17 +141,24 @@ jobs:
           fi
         continue-on-error: true
 
-      # 🛡️ الفحص الأمني الشامل وتشفير البيانات الحساسة تلقائياً ضد الهندسة العكسية
-      - name: Comprehensive Security Scan & Auto-Shielding
+      # 🛡️ الفحص الأمني والتحكم بالإصلاح بناءً على اختيار المستخدم (Auto-Fix Switch)
+      - name: Security Scan and Conditional Auto-Shielding
         run: |
+          AUTO_FIX="${{ github.event.client_payload.auto_fix }}"
+          if [ -z "$AUTO_FIX" ]; then AUTO_FIX="${{ github.event.client_payload.enable_security_shield }}"; fi
+          if [ -z "$AUTO_FIX" ]; then AUTO_FIX="true"; fi
+
           echo "========================================================"
-          echo "🔍 بدء الفحص الأمني الشامل وتحصين المشروع..."
+          echo "🔍 بدء الفحص الأمني (وضع الإصلاح التلقائي: $AUTO_FIX)..."
           echo "========================================================"
 
           cat << 'EOF' > security_shield.py
           import os
+          import sys
           import re
           import random
+
+          auto_fix_enabled = sys.argv[1].lower() == "true"
 
           def generate_obfuscated_code(secret_text):
               key = random.randint(105, 245)
@@ -162,7 +169,6 @@ jobs:
           findings = []
           secured_items = 0
 
-          # فحص وتشفير نصوص الأكواد الصريحة
           secret_patterns = [
               (r'(password|passwd|pass|admin_pass|secret_key|api_secret)\s*(=|:)\s*"([^"]{4,})"', "كلمة سر / مفتاح سري"),
               (r'(db_password|database_password)\s*(=|:)\s*"([^"]{4,})"', "كلمة مرور قاعدة بيانات"),
@@ -188,28 +194,34 @@ jobs:
                                   if secret_val.lower() in ["", "true", "false", "default", "null"]:
                                       continue
 
-                                  obfuscated = generate_obfuscated_code(secret_val)
-                                  content = content.replace(match.group(0), f"{var_name} {op} {obfuscated}")
-                                  modified = True
-                                  secured_items += 1
-                                  findings.append(f"🔒 تم تحصين {desc} في الملف ({file}) للمتغير [{var_name}]")
+                                  if auto_fix_enabled:
+                                      obfuscated = generate_obfuscated_code(secret_val)
+                                      content = content.replace(match.group(0), f"{var_name} {op} {obfuscated}")
+                                      modified = True
+                                      secured_items += 1
+                                      findings.append(f"🔒 [تم الإصلاح والتشفير] {desc} في ({file}) للمتغير [{var_name}]")
+                                  else:
+                                      findings.append(f"⚠️ [تم الرصد بدون إصلاح بناءً على طلبك] {desc} في ({file}) للمتغير [{var_name}]")
 
-                      if modified:
+                      if modified and auto_fix_enabled:
                           with open(filepath, 'w', encoding='utf-8') as f:
                               f.write(content)
 
-          print("\n📊 --- تقرير الفحص الأمني ---")
+          print("\n📊 --- تقرير الفحص الأمني النهائي ---")
           if findings:
               for item in findings:
                   print(f"  • {item}")
           else:
               print("  ✅ الأكواد سليمة ولا توجد كلمات سر مكشوفة بصيغة صريحة.")
 
-          print(f"\n🛡️ إجمالي النصوص الحساسة التي تم تشفيرها: {secured_items}")
+          if auto_fix_enabled:
+              print(f"\n🛡️ إجمالي النصوص الحساسة التي تم تشفيرها بنجاح: {secured_items}")
+          else:
+              print("\nℹ️ تم تخطي التشفير التلقائي (البناء بالصيغة الأصلية).")
           print("========================================================\n")
           EOF
 
-          python3 security_shield.py
+          python3 security_shield.py "$AUTO_FIX"
           rm security_shield.py
         continue-on-error: true
 
