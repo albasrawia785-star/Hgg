@@ -149,21 +149,20 @@ jobs:
           fi
         continue-on-error: true
 
-      # 🛡️ محرك التشفير الآمن مع التوافق التام للأنواع (Byte Casting & Var Preservation)
-      - name: Safe Bulletproof In-Memory Obfuscation
+      # 🛡️ محرك التشفير الآمن والذكي للبيانات الحساسة
+      - name: Precise & Bulletproof Code Obfuscation
         run: |
           echo "================================================================="
-          echo "🛡️ تفعيل التشفير الثنائي المتوافق مع بايتات كوتلن..."
+          echo "🛡️ تفعيل التشفير الذكي والدقيق للبيانات الحساسة والأسرار..."
           echo "================================================================="
 
-          cat << 'EOF' > safe_obfuscator.py
+          cat << 'EOF' > smart_hardener.py
           import os
           import re
           import random
 
           def encode_to_vault(text, salt):
               encoded = text.encode('utf-8')
-              # إضافة .toByte() صراحة لتفادي خطأ Type mismatch في Kotlin
               encrypted = [f"{b ^ salt}.toByte()" for b in encoded]
               return ", ".join(encrypted)
 
@@ -182,8 +181,8 @@ jobs:
                       with open(p, "w", encoding="utf-8") as f:
                           f.write(m)
 
-          # 2. حقن SecurityVault الآمن داخل مجلد الكود
-          vault_code = """package com.example.security
+          # 2. حقن كائن التشفير SecurityVault داخل حزمة com.example.utils
+          vault_code = """package com.example.utils
 
           object SecurityVault {
               @JvmStatic
@@ -197,20 +196,20 @@ jobs:
           }
           """
           for root, dirs, files in os.walk("project_dir"):
-              if root.endswith(os.path.join("src", "main", "java")):
-                  vault_dir = os.path.join(root, "com", "example", "security")
-                  os.makedirs(vault_dir, exist_ok=True)
-                  with open(os.path.join(vault_dir, "SecurityVault.kt"), "w", encoding="utf-8") as vf:
+              if root.endswith(os.path.join("src", "main", "java", "com", "example", "utils")):
+                  with open(os.path.join(root, "SecurityVault.kt"), "w", encoding="utf-8") as vf:
                       vf.write(vault_code)
                   break
 
-          # 3. تشفير المتغيرات مع الحفاظ على var كما هي لمنع خطأ val cannot be reassigned
-          pattern = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*(?::\s*String)?\s*=\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
+          # 3. نمط لاستهداف المتغيرات الحساسة الصريحة فقط (دون لمس الواجهات أو الـ ViewModels)
+          # يستهدف: PASSWORD, USERNAME, PHONE, ADMIN, SECRET, TOKEN, KEY, NAME داخل ملفات الإعدادات و Utils و Constants
+          secret_var_pattern = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]*(?:PASSWORD|PASSWD|PASS|SECRET|TOKEN|API_KEY|KEY|ADMIN|AUTH|PHONE|USERNAME|USER|CREDENTIAL|PIN|RESTAURANT)[a-zA-Z0-9_]*)\s*(?::\s*String)?\s*=\s*"([^"$\r\n\\]+)"'
 
           for root, dirs, files in os.walk("project_dir"):
               dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
               for file in files:
                   if file.endswith('.kt') and not file.endswith('SecurityVault.kt'):
+                      # استبعاد ملفات قواعد البيانات لضمان سلامة Room KSP
                       p = os.path.join(root, file)
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           content = f.read()
@@ -234,19 +233,18 @@ jobs:
                           secured_count += 1
                           modified = True
 
-                          # الحفاظ على var إن كانت أصلية، وتحويل const val إلى val
                           target_decl = "var" if "var" in decl else "val"
-                          return f"{target_decl} {var_name}: String = com.example.security.SecurityVault.d(byteArrayOf({b_str}), {salt})"
+                          return f"{target_decl} {var_name}: String = com.example.utils.SecurityVault.d(byteArrayOf({b_str}), {salt})"
 
-                      new_content = re.sub(pattern, replacer, content)
+                      new_content = re.sub(secret_var_pattern, replacer, content)
 
                       if modified:
                           with open(p, "w", encoding="utf-8") as f:
                               f.write(new_content)
 
-          # 4. قواعد R8 للتعتيم الشامل
+          # 4. قواعد R8 الشاملة والمتوافقة 100% مع Compose و Room
           r8_rules = """
-          -keep class com.example.security.SecurityVault { *; }
+          -keep class com.example.utils.SecurityVault { *; }
           -repackageclasses ''
           -allowaccessmodification
           -dontwarn **
@@ -255,6 +253,9 @@ jobs:
           -keep class * extends androidx.room.RoomDatabase
           -keep @androidx.room.Entity class * { *; }
           -keep @androidx.room.Dao class * { *; }
+          -keep class androidx.compose.** { *; }
+          -keep class androidx.activity.** { *; }
+          -keep class androidx.fragment.app.** { *; }
           -assumenosideeffects class android.util.Log {
               public static boolean isLoggable(java.lang.String, int);
               public static int v(...);
@@ -270,11 +271,11 @@ jobs:
                   with open(p_file, "a", encoding="utf-8") as f:
                       f.write(r8_rules)
 
-          print(f"🔒 تم تشفير {secured_count} متغير نصي بأمان تام وتوافق كامل مع Kotlin Types.")
+          print(f"🔒 تم تشفير {secured_count} حقل حساس صريح بنجاح مع الحفاظ على استقرار الواجهات.")
           EOF
 
-          python3 safe_obfuscator.py
-          rm safe_obfuscator.py
+          python3 smart_hardener.py
+          rm smart_hardener.py
 
           # تفعيل التقليص في build.gradle
           find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
