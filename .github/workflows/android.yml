@@ -1,115 +1,23 @@
-name: Universal Bulletproof Android Builder & Security Engine
+name: Universal Bulletproof Android Builder & Military Hardener
 
 on:
   repository_dispatch:
-    types: [scan_project, build_apk, build_aab, build_app, build]
+    types: [build_apk, build_aab, build_app, build]
   workflow_dispatch:
 
 jobs:
-  # =========================================================================
-  # 🕵️‍♂️ المرحلة الأولى: الفحص الأمني والتحليل الدقيق
-  # =========================================================================
-  scan:
-    if: github.event.action == 'scan_project'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Locate and Extract Project
-        run: |
-          BUILD_ID="${{ github.event.client_payload.build_id }}"
-          ZIP_FILE=$(find uploads -type f -name "*${BUILD_ID}*.zip" 2>/dev/null | head -n 1)
-          if [ -z "$ZIP_FILE" ]; then
-            ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
-          fi
-          mkdir -p project_dir
-          unzip -o "$ZIP_FILE" -d project_dir
-
-      - name: Deep Security Analysis Engine
-        run: |
-          cat << 'EOF' > scanner.py
-          import os, re, json
-
-          report = {
-              "build_id": "${{ github.event.client_payload.build_id }}",
-              "issues_count": 0,
-              "findings": []
-          }
-
-          secret_signatures = [
-              (r'(const\s+val|val|var)\s+([a-zA-Z0-9_]*(?:password|passwd|pass|admin_pass|secret_key|api_secret|db_password)[a-zA-Z0-9_]*)\s*=\s*"([^"]{4,})"', "كلمة مرور أو مفتاح مصادقة صريح"),
-              (r'(AIzaSy[0-9A-Za-z-_]{33})', "مفتاح Firebase API مكشوف"),
-              (r'(ghp_[0-9a-zA-Z]{36})', "رمز وصول شخصي لـ GitHub مسرب")
-          ]
-
-          # 1. تدقيق AndroidManifest
-          for root, _, files in os.walk("project_dir"):
-              for file in files:
-                  if file == "AndroidManifest.xml":
-                      with open(os.path.join(root, file), 'r', encoding='utf-8', errors='ignore') as f:
-                          m = f.read()
-                      if 'android:allowBackup="true"' in m:
-                          report["findings"].append({
-                              "type": "high",
-                              "title": "ثغرة allowBackup=true تتيح سحب قواعد البيانات والبيانات الحساسة عبر ADB",
-                              "file": "AndroidManifest.xml"
-                          })
-                          report["issues_count"] += 1
-                      if 'android:usesCleartextTraffic="true"' in m:
-                          report["findings"].append({
-                              "type": "critical",
-                              "title": "تفعيل usesCleartextTraffic يسمح بالتنصت على بيانات الاتصال (HTTP غير مشفر)",
-                              "file": "AndroidManifest.xml"
-                          })
-                          report["issues_count"] += 1
-
-          # 2. تدقيق الكود المصدري (Kotlin / Java)
-          for root, dirs, files in os.walk("project_dir"):
-              dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
-              for file in files:
-                  if file.endswith(('.kt', '.java')):
-                      with open(os.path.join(root, file), 'r', encoding='utf-8', errors='ignore') as f:
-                          content = f.read()
-                      for pattern, desc in secret_signatures:
-                          for match in re.finditer(pattern, content, re.IGNORECASE):
-                              report["findings"].append({
-                                  "type": "critical",
-                                  "title": desc,
-                                  "file": file
-                              })
-                              report["issues_count"] += 1
-
-          with open("security_report.json", "w", encoding="utf-8") as f:
-              json.dump(report, f, ensure_ascii=False, indent=2)
-          EOF
-          python3 scanner.py
-
-      - name: Publish Security Audit Report
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: "scan-${{ github.event.client_payload.build_id }}"
-          name: "Security Scan ${{ github.event.client_payload.build_id }}"
-          files: "security_report.json"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # =========================================================================
-  # ⚙️ المرحلة الثانية: بناء الـ APK وتطبيق التحصين
-  # =========================================================================
   build:
-    if: github.event.action != 'scan_project'
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
+          sslVerify: false
+          fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up JDK 17
@@ -128,6 +36,12 @@ jobs:
           if [ -z "$ZIP_FILE" ]; then
             ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
           fi
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "Error: Project zip file not found!"
+            exit 1
+          fi
+
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
@@ -164,18 +78,6 @@ jobs:
             done
           fi
 
-          if [ "$ENABLE_MINIFY" == "true" ]; then
-            find project_dir -type d -name "app" | while read -r app_mod; do
-              printf -- "-repackageclasses ''\n-allowaccessmodification\n-dontwarn **\n-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod\n-keep class androidx.activity.** { *; }\n-keep class androidx.fragment.app.** { *; }\n-keep public class * extends android.app.Activity\n-keep public class * extends android.app.Application\n-keep public class * extends android.app.Service\n-keep public class * extends android.content.BroadcastReceiver\n-keepclassmembers enum * { *; }\n" >> "$app_mod/proguard-rules.pro"
-            done
-            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
-              sed -i -E "s/(isMinifyEnabled\s*=\s*)false/\1true/g" "$g_file"
-              sed -i -E "s/(minifyEnabled\s+)false/\1true/g" "$g_file"
-              sed -i -E "s/(isShrinkResources\s*=\s*)false/\1true/g" "$g_file"
-              sed -i -E "s/(shrinkResources\s+)false/\1true/g" "$g_file"
-            done
-          fi
-
           if [ -n "$MIN_SDK" ]; then
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/(minSdk(Version)?\s*=\s*)[0-9]+/\1$MIN_SDK/g" {} +
           fi
@@ -187,45 +89,141 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Apply Auto-Fix & XOR Obfuscation (If Approved)
+      # 🛡️ محرك التدخل السيبراني الشامل والتشفير البوليمورفي
+      - name: Master Cyber Threat Auto-Remediation & Bytecode Obfuscation
         run: |
           AUTO_FIX="${{ github.event.client_payload.auto_fix }}"
           if [ "$AUTO_FIX" == "true" ]; then
-            echo "🛡️ تطبيق الإصلاح والتشفير التلقائي للأكواد..."
-            cat << 'EOF' > fix.py
-            import os, re, random
+            echo "================================================================="
+            echo "🛡️ تفعيل محرك التحصين السيبراني والتشفير متعدد الطبقات..."
+            echo "================================================================="
 
-            def xor_obfuscate(text):
-                k = random.randint(110, 245)
-                b = [str(ord(c) ^ k) for c in text]
-                return f"String(byteArrayOf({', '.join(b)}).map {{ (it.toInt() xor {k}).toByte() }}.toByteArray())"
+            cat << 'EOF' > master_hardener.py
+            import os
+            import sys
+            import re
+            import random
 
-            # 1. إصلاح AndroidManifest
+            def polymorphic_xor(text):
+                salt = random.randint(110, 250)
+                encrypted = [str(ord(c) ^ salt) for c in text]
+                return f"String(byteArrayOf({', '.join(encrypted)}).map {{ (it.toInt() xor {salt}).toByte() }}.toByteArray(), Charsets.UTF_8)"
+
+            fixed_manifest_count = 0
+            secured_secrets_count = 0
+            hardened_webviews = 0
+
+            # 1. تحصين المانيفست وسلوك النظام
             for root, _, files in os.walk("project_dir"):
                 for file in files:
                     if file == "AndroidManifest.xml":
                         p = os.path.join(root, file)
-                        with open(p, "r", encoding="utf-8") as f:
-                            c = f.read().replace('android:usesCleartextTraffic="true"', 'android:usesCleartextTraffic="false"').replace('android:allowBackup="true"', 'android:allowBackup="false"')
-                        with open(p, "w", encoding="utf-8") as f:
-                            f.write(c)
+                        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                            m = f.read()
+                        
+                        orig_m = m
+                        m = m.replace('android:allowBackup="true"', 'android:allowBackup="false"')
+                        m = m.replace('android:usesCleartextTraffic="true"', 'android:usesCleartextTraffic="false"')
+                        m = re.sub(r'android:debuggable="true"', '', m)
+                        
+                        if m != orig_m:
+                            with open(p, "w", encoding="utf-8") as f:
+                                f.write(m)
+                            fixed_manifest_count += 1
 
-            # 2. تشفير الكود وتحويل const val إلى val لمنع أخطاء التجميع
-            pattern = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]*(?:password|passwd|pass|admin_pass|secret_key|api_secret|db_password)[a-zA-Z0-9_]*)\s*=\s*"([^"]{4,})"'
+            # 2. التشفير البوليمورفي للأكواد وتحصين الـ WebView
+            secret_patterns = [
+                (r'(const\s+val|val|var)\s+([a-zA-Z0-9_]*(?:password|passwd|pass|admin_pass|secret_key|api_secret|db_password|token|auth_key)[a-zA-Z0-9_]*)\s*=\s*"([^"]{4,})"', "كلمة مرور / مفتاح سري"),
+                (r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*=\s*"(AIzaSy[0-9A-Za-z-_]{33})"', "مفتاح Firebase API"),
+                (r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*=\s*"(ghp_[0-9a-zA-Z]{36})"', "توكن GitHub"),
+                (r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*=\s*"(AKIA[0-9A-Z]{16})"', "مفتاح AWS Access Key"),
+                (r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*=\s*"(sk_live_[0-9a-zA-Z]{24,})"', "مفتاح Stripe السري")
+            ]
+
             for root, dirs, files in os.walk("project_dir"):
                 dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
                 for file in files:
                     if file.endswith(('.kt', '.java')):
                         p = os.path.join(root, file)
                         with open(p, "r", encoding="utf-8", errors="ignore") as f:
-                            c = f.read()
-                        new_c = re.sub(pattern, lambda m: f"val {m.group(2)} = {xor_obfuscate(m.group(3))}", c)
-                        if new_c != c:
+                            content = f.read()
+
+                        modified = False
+
+                        # تحصين ملفات الـ WebView
+                        if "setAllowFileAccess(true)" in content:
+                            content = content.replace("setAllowFileAccess(true)", "setAllowFileAccess(false)")
+                            modified = True
+                            hardened_webviews += 1
+
+                        if "setAllowFileAccessFromFileURLs(true)" in content:
+                            content = content.replace("setAllowFileAccessFromFileURLs(true)", "setAllowFileAccessFromFileURLs(false)")
+                            modified = True
+                            hardened_webviews += 1
+
+                        # تشفير الأسرار وتحويل const val إلى val لمنع أخطاء التجميع
+                        for pattern, label in secret_patterns:
+                            matches = list(re.finditer(pattern, content, re.IGNORECASE))
+                            for match in matches:
+                                var_name = match.group(2)
+                                secret_val = match.group(3)
+                                if secret_val.lower() in ["", "true", "false", "default", "null"]:
+                                    continue
+                                
+                                obfuscated = polymorphic_xor(secret_val)
+                                new_decl = f"val {var_name} = {obfuscated}"
+                                content = content.replace(match.group(0), new_decl)
+                                modified = True
+                                secured_secrets_count += 1
+
+                        if modified:
                             with open(p, "w", encoding="utf-8") as f:
-                                f.write(new_c)
+                                f.write(content)
+
+            # 3. حقن قواعد تعتيم R8 وحذف الـ Logs في النسخة المجمعة
+            r8_rules = """
+            -repackageclasses ''
+            -allowaccessmodification
+            -dontwarn **
+            -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
+            -keep class androidx.activity.** { *; }
+            -keep class androidx.fragment.app.** { *; }
+            -keep public class * extends android.app.Activity
+            -keep public class * extends android.app.Application
+            -keep public class * extends android.app.Service
+            -keep public class * extends android.content.BroadcastReceiver
+            -keepclassmembers enum * { *; }
+            -assumenosideeffects class android.util.Log {
+                public static boolean isLoggable(java.lang.String, int);
+                public static int v(...);
+                public static int d(...);
+                public static int i(...);
+            }
+            """
+            for root, dirs, files in os.walk("project_dir"):
+                if os.path.basename(root) == "app":
+                    p_file = os.path.join(root, "proguard-rules.pro")
+                    with open(p_file, "a", encoding="utf-8") as f:
+                        f.write(r8_rules)
+
+            print(f"✅ تم تأمين ملفات المانيفست: {fixed_manifest_count}")
+            print(f"🔒 تم تشفير وتحصين النصوص والمفاتيح: {secured_secrets_count}")
+            print(f"🌐 تم تأمين مكونات WebView: {hardened_webviews}")
+            print("🛡️ تم حقن درع R8 وإزالة سجلات التتبع (Logging Sanitized).")
             EOF
-            python3 fix.py
-            rm fix.py
+
+            python3 master_hardener.py
+            rm master_hardener.py
+
+            # تفعيل minifyEnabled و shrinkResources تلقائياً
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
+              sed -i -E "s/(isMinifyEnabled\s*=\s*)false/\1true/g" "$g_file"
+              sed -i -E "s/(minifyEnabled\s+)false/\1true/g" "$g_file"
+              sed -i -E "s/(isShrinkResources\s*=\s*)false/\1true/g" "$g_file"
+              sed -i -E "s/(shrinkResources\s+)false/\1true/g" "$g_file"
+            done
+          else
+            echo "ℹ️ تم تخطي التحصين التلقائي (البناء بالصيغة الأصلية بناءً على طلبك)."
           fi
         continue-on-error: true
 
@@ -271,6 +269,7 @@ jobs:
           BUILD_TYPE="${{ github.event.client_payload.build_type }}"
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           ENABLE_MINIFY="${{ github.event.client_payload.enable_minify }}"
+          AUTO_FIX="${{ github.event.client_payload.auto_fix }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
           find . -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i 's/signingConfig = signingConfigs.getByName("release")/signingConfig = signingConfigs.getByName("debug")/g' {} +
@@ -281,7 +280,7 @@ jobs:
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.aab"
           else
-            if [ "$ENABLE_MINIFY" == "true" ]; then
+            if [ "$ENABLE_MINIFY" == "true" ] || [ "$AUTO_FIX" == "true" ]; then
               ./gradlew clean assembleRelease --no-daemon || ./gradlew clean assembleDebug --no-daemon
             else
               ./gradlew clean assembleDebug --no-daemon
@@ -290,22 +289,36 @@ jobs:
             FINAL_NAME="${PROJECT_NAME}.apk"
           fi
 
-          if [ -z "$OUT_FILE" ]; then exit 1; fi
+          if [ -z "$OUT_FILE" ]; then
+            echo "Error: Output file not found!"
+            exit 1
+          fi
 
           cp "$OUT_FILE" "$GITHUB_WORKSPACE/$FINAL_NAME"
           echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
+
           ./gradlew signingReport --no-daemon | grep -E "Variant: debug|Variant: release|SHA1:" || true
+
+      - name: Extract Exact Failure Cause
+        if: failure()
+        run: |
+          echo "=========================================="
+          echo "❌ [ROOT CAUSE] السبب الدقيق لفشل البناء:"
+          echo "=========================================="
+          find . -name "*.log" -exec grep -Hn -E "\* What went wrong:|Execution failed for task|Compilation error" {} + 2>/dev/null || true
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
+        if: success()
         with:
-          tag_name: "build-${{ github.event.client_payload.build_id }}"
-          name: "Build ${{ github.event.client_payload.build_id }}"
-          files: "${{ env.FINAL_ASSET }}"
+          tag_name: build-${{ github.event.client_payload.build_id }}
+          name: Build ${{ github.event.client_payload.build_id }}
+          files: ${{ env.FINAL_ASSET }}
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # خطوة تنظيف المستودع الفورية للحفاظ على النظافة التامة
       - name: Force Clean Uploads Content Cleanly
         if: always()
         run: |
