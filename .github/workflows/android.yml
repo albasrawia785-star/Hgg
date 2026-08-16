@@ -49,7 +49,6 @@ jobs:
         run: |
           APP_NAME="${{ github.event.client_payload.app_name }}"
           PACKAGE_NAME="${{ github.event.client_payload.package_name }}"
-          ENABLE_MINIFY="${{ github.event.client_payload.enable_minify }}"
           RAW_MIN_SDK="${{ github.event.client_payload.min_sdk }}"
           VERSION_CODE="${{ github.event.client_payload.version_code }}"
           VERSION_NAME="${{ github.event.client_payload.version_name }}"
@@ -89,13 +88,15 @@ jobs:
           fi
         continue-on-error: true
 
-      # 🛡️ محرك التدخل السيبراني الشامل والتشفير البوليمورفي
-      - name: Master Cyber Threat Auto-Remediation & Bytecode Obfuscation
+      # 🛡️ محرك التشفير الشامل لكل النصوص والنصوص الثابتة بدون استثناء
+      - name: Master Cyber Threat Auto-Remediation & Universal String Obfuscation
         run: |
           AUTO_FIX="${{ github.event.client_payload.auto_fix }}"
+          if [ -z "$AUTO_FIX" ]; then AUTO_FIX="true"; fi
+
           if [ "$AUTO_FIX" == "true" ]; then
             echo "================================================================="
-            echo "🛡️ تفعيل محرك التحصين السيبراني والتشفير متعدد الطبقات..."
+            echo "🛡️ تفعيل التشفير الثنائي الشامل وإخفاء كافة النصوص الصريحة..."
             echo "================================================================="
 
             cat << 'EOF' > master_hardener.py
@@ -105,40 +106,30 @@ jobs:
             import random
 
             def polymorphic_xor(text):
-                salt = random.randint(110, 250)
-                encrypted = [str(ord(c) ^ salt) for c in text]
+                salt = random.randint(110, 245)
+                # تحويل كل حرف بنظام UTF-8 إلى XOR مع المفتاح العشوائي
+                encoded_bytes = text.encode('utf-8')
+                encrypted = [str(b ^ salt) for b in encoded_bytes]
                 return f"String(byteArrayOf({', '.join(encrypted)}).map {{ (it.toInt() xor {salt}).toByte() }}.toByteArray(), Charsets.UTF_8)"
 
-            fixed_manifest_count = 0
-            secured_secrets_count = 0
-            hardened_webviews = 0
+            secured_count = 0
 
-            # 1. تحصين المانيفست وسلوك النظام
+            # 1. تحصين المانيفست
             for root, _, files in os.walk("project_dir"):
                 for file in files:
                     if file == "AndroidManifest.xml":
                         p = os.path.join(root, file)
                         with open(p, "r", encoding="utf-8", errors="ignore") as f:
                             m = f.read()
-                        
-                        orig_m = m
                         m = m.replace('android:allowBackup="true"', 'android:allowBackup="false"')
                         m = m.replace('android:usesCleartextTraffic="true"', 'android:usesCleartextTraffic="false"')
                         m = re.sub(r'android:debuggable="true"', '', m)
-                        
-                        if m != orig_m:
-                            with open(p, "w", encoding="utf-8") as f:
-                                f.write(m)
-                            fixed_manifest_count += 1
+                        with open(p, "w", encoding="utf-8") as f:
+                            f.write(m)
 
-            # 2. التشفير البوليمورفي للأكواد وتحصين الـ WebView
-            secret_patterns = [
-                (r'(const\s+val|val|var)\s+([a-zA-Z0-9_]*(?:password|passwd|pass|admin_pass|secret_key|api_secret|db_password|token|auth_key)[a-zA-Z0-9_]*)\s*=\s*"([^"]{4,})"', "كلمة مرور / مفتاح سري"),
-                (r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*=\s*"(AIzaSy[0-9A-Za-z-_]{33})"', "مفتاح Firebase API"),
-                (r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*=\s*"(ghp_[0-9a-zA-Z]{36})"', "توكن GitHub"),
-                (r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*=\s*"(AKIA[0-9A-Z]{16})"', "مفتاح AWS Access Key"),
-                (r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*=\s*"(sk_live_[0-9a-zA-Z]{24,})"', "مفتاح Stripe السري")
-            ]
+            # 2. تشفير كافة متغيرات النصوص وحذف const لمنع بقائها في الـ DEX Pool
+            # هذا النمط يلتقط أي متغير يحتوي على نص سواء كان كلمة سر أو اسم أو رقم هاتف أو مفتاح
+            string_var_pattern = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*(?::\s*String)?\s*=\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
 
             for root, dirs, files in os.walk("project_dir"):
                 dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
@@ -150,41 +141,35 @@ jobs:
 
                         modified = False
 
-                        # تحصين ملفات الـ WebView
-                        if "setAllowFileAccess(true)" in content:
-                            content = content.replace("setAllowFileAccess(true)", "setAllowFileAccess(false)")
+                        def replace_string_var(match):
+                            nonlocal modified, secured_count
+                            var_name = match.group(2)
+                            str_val = match.group(3)
+                            
+                            # استبعاد النصوص الفارغة جداً أو نصوص الحزم
+                            if str_val in ["", " "]:
+                                return match.group(0)
+                            
                             modified = True
-                            hardened_webviews += 1
+                            secured_count += 1
+                            return f"val {var_name} = {polymorphic_xor(str_val)}"
 
-                        if "setAllowFileAccessFromFileURLs(true)" in content:
-                            content = content.replace("setAllowFileAccessFromFileURLs(true)", "setAllowFileAccessFromFileURLs(false)")
-                            modified = True
-                            hardened_webviews += 1
+                        new_content = re.sub(string_var_pattern, replace_string_var, content)
 
-                        # تشفير الأسرار وتحويل const val إلى val لمنع أخطاء التجميع
-                        for pattern, label in secret_patterns:
-                            matches = list(re.finditer(pattern, content, re.IGNORECASE))
-                            for match in matches:
-                                var_name = match.group(2)
-                                secret_val = match.group(3)
-                                if secret_val.lower() in ["", "true", "false", "default", "null"]:
-                                    continue
-                                
-                                obfuscated = polymorphic_xor(secret_val)
-                                new_decl = f"val {var_name} = {obfuscated}"
-                                content = content.replace(match.group(0), new_decl)
-                                modified = True
-                                secured_secrets_count += 1
+                        # إغلاق ثغرات الـ WebView
+                        new_content = new_content.replace("setAllowFileAccess(true)", "setAllowFileAccess(false)")
+                        new_content = new_content.replace("setAllowFileAccessFromFileURLs(true)", "setAllowFileAccessFromFileURLs(false)")
 
-                        if modified:
+                        if modified or new_content != content:
                             with open(p, "w", encoding="utf-8") as f:
-                                f.write(content)
+                                f.write(new_content)
 
-            # 3. حقن قواعد تعتيم R8 وحذف الـ Logs في النسخة المجمعة
-            r8_rules = """
+            # 3. إعداد قواعد R8 القوية مع مسح أسماء الدوال والكلاسات وإزالة الـ Logs
+            r8_aggressive_rules = """
             -repackageclasses ''
             -allowaccessmodification
             -dontwarn **
+            -overloadaggressively
             -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
             -keep class androidx.activity.** { *; }
             -keep class androidx.fragment.app.** { *; }
@@ -198,32 +183,30 @@ jobs:
                 public static int v(...);
                 public static int d(...);
                 public static int i(...);
+                public static int w(...);
+                public static int e(...);
             }
             """
             for root, dirs, files in os.walk("project_dir"):
                 if os.path.basename(root) == "app":
                     p_file = os.path.join(root, "proguard-rules.pro")
                     with open(p_file, "a", encoding="utf-8") as f:
-                        f.write(r8_rules)
+                        f.write(r8_aggressive_rules)
 
-            print(f"✅ تم تأمين ملفات المانيفست: {fixed_manifest_count}")
-            print(f"🔒 تم تشفير وتحصين النصوص والمفاتيح: {secured_secrets_count}")
-            print(f"🌐 تم تأمين مكونات WebView: {hardened_webviews}")
-            print("🛡️ تم حقن درع R8 وإزالة سجلات التتبع (Logging Sanitized).")
+            print(f"🔒 تم تحويل وتشفير {secured_count} نصاً برمجياً إلى مصفوفات Bytecode مشفرة.")
+            print("🛡️ تم حقن درع R8 Aggressive Obfuscation وقفل المانيفست.")
             EOF
 
             python3 master_hardener.py
             rm master_hardener.py
 
-            # تفعيل minifyEnabled و shrinkResources تلقائياً
+            # إجبار تفعيل التقليص والـ R8 في الـ Build
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
               sed -i -E "s/(isMinifyEnabled\s*=\s*)false/\1true/g" "$g_file"
               sed -i -E "s/(minifyEnabled\s+)false/\1true/g" "$g_file"
               sed -i -E "s/(isShrinkResources\s*=\s*)false/\1true/g" "$g_file"
               sed -i -E "s/(shrinkResources\s+)false/\1true/g" "$g_file"
             done
-          else
-            echo "ℹ️ تم تخطي التحصين التلقائي (البناء بالصيغة الأصلية بناءً على طلبك)."
           fi
         continue-on-error: true
 
@@ -254,7 +237,8 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Execute Gradle Build
+      # ⚙️ تجميع النسخة مع إجبار تشغيل R8 وتوقيعها بالمفتاح
+      - name: Execute Gradle Build (With Guaranteed R8 Obfuscation)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
         run: |
@@ -262,8 +246,9 @@ jobs:
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
 
-          keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Debug, O=Android, C=US" || true
-          if [ -d "app" ]; then cp -f debug.keystore app/debug.keystore || true; fi
+          # إنشاء Keystore وتوقيع نسخة Release به
+          keytool -genkey -v -keystore release.keystore -alias androidkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Secure, O=Android, C=US" || true
+          if [ -d "app" ]; then cp -f release.keystore app/release.keystore || true; fi
 
           chmod +x ./gradlew
           BUILD_TYPE="${{ github.event.client_payload.build_type }}"
@@ -272,19 +257,18 @@ jobs:
           AUTO_FIX="${{ github.event.client_payload.auto_fix }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
-          find . -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i 's/signingConfig = signingConfigs.getByName("release")/signingConfig = signingConfigs.getByName("debug")/g' {} +
-          find . -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i 's/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/g' {} +
+          # ربط توقيع الـ release بمفتاح البناء
+          find . -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
+            sed -i 's/signingConfig = signingConfigs.getByName("debug")/signingConfig = signingConfigs.getByName("release")/g' "$g_file" || true
+          done
 
+          # دائماً يتم بناء Release لتشغيل محرك R8 للتعتيم والتقليص والتشفير
           if [ "$BUILD_TYPE" == "aab" ]; then
-            ./gradlew clean bundleRelease --no-daemon || ./gradlew clean bundleDebug --no-daemon
+            ./gradlew clean bundleRelease --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.aab"
           else
-            if [ "$ENABLE_MINIFY" == "true" ] || [ "$AUTO_FIX" == "true" ]; then
-              ./gradlew clean assembleRelease --no-daemon || ./gradlew clean assembleDebug --no-daemon
-            else
-              ./gradlew clean assembleDebug --no-daemon
-            fi
+            ./gradlew clean assembleRelease --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/apk/*/*.apk" -not -name "*unaligned*" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.apk"
           fi
@@ -297,7 +281,7 @@ jobs:
           cp "$OUT_FILE" "$GITHUB_WORKSPACE/$FINAL_NAME"
           echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
 
-          ./gradlew signingReport --no-daemon | grep -E "Variant: debug|Variant: release|SHA1:" || true
+          ./gradlew signingReport --no-daemon | grep -E "Variant: release|SHA1:" || true
 
       - name: Extract Exact Failure Cause
         if: failure()
@@ -318,7 +302,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # خطوة تنظيف المستودع الفورية للحفاظ على النظافة التامة
       - name: Force Clean Uploads Content Cleanly
         if: always()
         run: |
