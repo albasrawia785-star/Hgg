@@ -368,7 +368,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ توفير مفاتيح التوقيع في المجلدات الجذرية فقط وبناء الـ APK
+      # ⚙️ توفير مفاتيح التوقيع وحقن خصائص التوقيع الكاملة (storePassword, keyPassword, keyAlias)
       - name: Build & Guaranteed Apksigner (V1, V2, V3 Signing)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
@@ -380,7 +380,7 @@ jobs:
           # 🔑 1. توليد مفتاح التوقيع الشامل
           keytool -genkey -v -keystore universal.keystore -alias androidkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Secure, O=Android, C=US" || true
 
-          # 🔑 2. نسخ المفتاح في المجلدات الجذرية للمشروع فقط (منع وضعه في مجلدات res)
+          # 🔑 2. نسخ المفتاح في المجلدات الجذرية للمشروع فقط
           for k_name in "my-upload-key.jks" "release.keystore" "debug.keystore" "upload-keystore.jks" "key.jks" "keystore.jks" "my-release-key.jks"; do
             cp -f universal.keystore "$k_name" 2>/dev/null || true
             if [ -d "app" ]; then cp -f universal.keystore "app/$k_name" 2>/dev/null || true; fi
@@ -390,7 +390,7 @@ jobs:
           # 🧹 تنظيف وقائي لحذف أي ملفات keystore دخلت مجلدات الموارد
           find . -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" \) -exec rm -f {} + 2>/dev/null || true
 
-          # 🔑 3. إيقاف أخطاء الـ Lint
+          # 🔑 3. حقن إعدادات التوقيع الكاملة في كل ملفات Gradle لتفادي missing storePassword
           cat << 'EOF' > fix_signing.py
           import os, re
 
@@ -400,6 +400,24 @@ jobs:
                       p = os.path.join(root, file)
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           c = f.read()
+
+                      # حقن التوقيع الشامل في Groovy build.gradle
+                      if file == "build.gradle":
+                          c = re.sub(r'storeFile\s+file\([^\)]+\)', 'storeFile file("universal.keystore")', c)
+                          c = re.sub(r'storePassword\s+["\'][^"\']*["\']', 'storePassword "android"', c)
+                          c = re.sub(r'keyPassword\s+["\'][^"\']*["\']', 'keyPassword "android"', c)
+                          c = re.sub(r'keyAlias\s+["\'][^"\']*["\']', 'keyAlias "androidkey"', c)
+
+                          # إذا كانت هناك كتلة release تنقصها الخصائص:
+                          if "signingConfigs" in c and "storePassword" not in c:
+                              c = re.sub(r'(signingConfigs\s*\{)', r'\1\n        release {\n            storeFile file("universal.keystore")\n            storePassword "android"\n            keyAlias "androidkey"\n            keyPassword "android"\n        }\n        debug {\n            storeFile file("universal.keystore")\n            storePassword "android"\n            keyAlias "androidkey"\n            keyPassword "android"\n        }', c)
+
+                      # حقن التوقيع الشامل في Kotlin DSL build.gradle.kts
+                      elif file == "build.gradle.kts":
+                          c = re.sub(r'storeFile\s*=\s*file\([^\)]+\)', 'storeFile = file("universal.keystore")', c)
+                          c = re.sub(r'storePassword\s*=\s*["\'][^"\']*["\']', 'storePassword = "android"', c)
+                          c = re.sub(r'keyPassword\s*=\s*["\'][^"\']*["\']', 'keyPassword = "android"', c)
+                          c = re.sub(r'keyAlias\s*=\s*["\'][^"\']*["\']', 'keyAlias = "androidkey"', c)
 
                       c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
                       c = re.sub(r'checkReleaseBuilds\s+true', 'checkReleaseBuilds false', c)
