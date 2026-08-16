@@ -1,23 +1,115 @@
-name: Universal Bulletproof Android Builder
+name: Universal Bulletproof Android Builder & Security Engine
 
 on:
   repository_dispatch:
-    types: [build_apk, build_aab, build_app, build]
+    types: [scan_project, build_apk, build_aab, build_app, build]
   workflow_dispatch:
 
 jobs:
-  build:
+  # =========================================================================
+  # 🕵️‍♂️ المرحلة الأولى: الفحص الأمني والتحليل الدقيق
+  # =========================================================================
+  scan:
+    if: github.event.action == 'scan_project'
     runs-on: ubuntu-latest
-
     permissions:
       contents: write
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          sslVerify: false
-          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Locate and Extract Project
+        run: |
+          BUILD_ID="${{ github.event.client_payload.build_id }}"
+          ZIP_FILE=$(find uploads -type f -name "*${BUILD_ID}*.zip" 2>/dev/null | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then
+            ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
+          fi
+          mkdir -p project_dir
+          unzip -o "$ZIP_FILE" -d project_dir
+
+      - name: Deep Security Analysis Engine
+        run: |
+          cat << 'EOF' > scanner.py
+          import os, re, json
+
+          report = {
+              "build_id": "${{ github.event.client_payload.build_id }}",
+              "issues_count": 0,
+              "findings": []
+          }
+
+          secret_signatures = [
+              (r'(const\s+val|val|var)\s+([a-zA-Z0-9_]*(?:password|passwd|pass|admin_pass|secret_key|api_secret|db_password)[a-zA-Z0-9_]*)\s*=\s*"([^"]{4,})"', "كلمة مرور أو مفتاح مصادقة صريح"),
+              (r'(AIzaSy[0-9A-Za-z-_]{33})', "مفتاح Firebase API مكشوف"),
+              (r'(ghp_[0-9a-zA-Z]{36})', "رمز وصول شخصي لـ GitHub مسرب")
+          ]
+
+          # 1. تدقيق AndroidManifest
+          for root, _, files in os.walk("project_dir"):
+              for file in files:
+                  if file == "AndroidManifest.xml":
+                      with open(os.path.join(root, file), 'r', encoding='utf-8', errors='ignore') as f:
+                          m = f.read()
+                      if 'android:allowBackup="true"' in m:
+                          report["findings"].append({
+                              "type": "high",
+                              "title": "ثغرة allowBackup=true تتيح سحب قواعد البيانات والبيانات الحساسة عبر ADB",
+                              "file": "AndroidManifest.xml"
+                          })
+                          report["issues_count"] += 1
+                      if 'android:usesCleartextTraffic="true"' in m:
+                          report["findings"].append({
+                              "type": "critical",
+                              "title": "تفعيل usesCleartextTraffic يسمح بالتنصت على بيانات الاتصال (HTTP غير مشفر)",
+                              "file": "AndroidManifest.xml"
+                          })
+                          report["issues_count"] += 1
+
+          # 2. تدقيق الكود المصدري (Kotlin / Java)
+          for root, dirs, files in os.walk("project_dir"):
+              dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
+              for file in files:
+                  if file.endswith(('.kt', '.java')):
+                      with open(os.path.join(root, file), 'r', encoding='utf-8', errors='ignore') as f:
+                          content = f.read()
+                      for pattern, desc in secret_signatures:
+                          for match in re.finditer(pattern, content, re.IGNORECASE):
+                              report["findings"].append({
+                                  "type": "critical",
+                                  "title": desc,
+                                  "file": file
+                              })
+                              report["issues_count"] += 1
+
+          with open("security_report.json", "w", encoding="utf-8") as f:
+              json.dump(report, f, ensure_ascii=False, indent=2)
+          EOF
+          python3 scanner.py
+
+      - name: Publish Security Audit Report
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "scan-${{ github.event.client_payload.build_id }}"
+          name: "Security Scan ${{ github.event.client_payload.build_id }}"
+          files: "security_report.json"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =========================================================================
+  # ⚙️ المرحلة الثانية: بناء الـ APK وتطبيق التحصين
+  # =========================================================================
+  build:
+    if: github.event.action != 'scan_project'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up JDK 17
@@ -31,28 +123,11 @@ jobs:
           BUILD_ID="${{ github.event.client_payload.build_id }}"
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
-          echo "Looking for project zip with Build ID: $BUILD_ID"
           
-          ZIP_FILE=""
-          for i in {1..10}; do
-            ZIP_FILE=$(find . -type f -name "*${BUILD_ID}*.zip" | head -n 1)
-            if [ -z "$ZIP_FILE" ]; then
-              ZIP_FILE=$(find . -type f -name "*.zip" -not -path "*/project_dir/*" | head -n 1)
-            fi
-
-            if [ -n "$ZIP_FILE" ]; then
-              echo "Found file: $ZIP_FILE"
-              break
-            fi
-            echo "Waiting for file ($i/10)..."
-            sleep 3
-          done
-
+          ZIP_FILE=$(find uploads -type f -name "*${BUILD_ID}*.zip" 2>/dev/null | head -n 1)
           if [ -z "$ZIP_FILE" ]; then
-            echo "Error: Project zip file not found!"
-            exit 1
+            ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
           fi
-
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
@@ -67,46 +142,32 @@ jobs:
 
           convert_sdk() {
             case "$1" in
-              "7") echo "24" ;;
-              "8") echo "26" ;;
-              "9") echo "28" ;;
-              "10") echo "29" ;;
-              "11") echo "30" ;;
-              "12") echo "31" ;;
-              "13") echo "33" ;;
-              "14") echo "34" ;;
-              "15") echo "35" ;;
-              "16") echo "36" ;;
-              "17") echo "37" ;;
-              *) echo "$1" ;;
+              "7") echo "24" ;; "8") echo "26" ;; "9") echo "28" ;; "10") echo "29" ;;
+              "11") echo "30" ;; "12") echo "31" ;; "13") echo "33" ;; "14") echo "34" ;;
+              "15") echo "35" ;; "16") echo "36" ;; "17") echo "37" ;; *) echo "$1" ;;
             esac
           }
-
           MIN_SDK=$(convert_sdk "$RAW_MIN_SDK")
 
           if [ -n "$APP_NAME" ]; then
             find project_dir -type f -name "strings.xml" -exec sed -i "s|<string name=\"app_name\">.*</string>|<string name=\"app_name\">$APP_NAME</string>|g" {} +
           fi
 
-          # تعديل معرف الحزمة وتحديث google-services.json تلقائياً
           if [ -n "$PACKAGE_NAME" ]; then
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
               sed -i -E "s/(applicationId\s*=\s*)\"[^\"]+\"/\1\"$PACKAGE_NAME\"/g" "$g_file"
               sed -i -E "s/(applicationId\s+)\"[^\"]+\"/\1\"$PACKAGE_NAME\"/g" "$g_file"
               sed -i -E "s/(applicationId\.set\s*\(\s*)\"[^\"]+\"(\s*\))/\1\"$PACKAGE_NAME\"\2/g" "$g_file"
             done
-
             find project_dir -type f -name "google-services.json" | while read -r json_file; do
               sed -i -E "s/\"package_name\":\s*\"[^\"]+\"/\"package_name\": \"$PACKAGE_NAME\"/g" "$json_file"
             done
           fi
 
-          # إعداد قواعد التشفير R8
           if [ "$ENABLE_MINIFY" == "true" ]; then
             find project_dir -type d -name "app" | while read -r app_mod; do
               printf -- "-repackageclasses ''\n-allowaccessmodification\n-dontwarn **\n-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod\n-keep class androidx.activity.** { *; }\n-keep class androidx.fragment.app.** { *; }\n-keep public class * extends android.app.Activity\n-keep public class * extends android.app.Application\n-keep public class * extends android.app.Service\n-keep public class * extends android.content.BroadcastReceiver\n-keepclassmembers enum * { *; }\n" >> "$app_mod/proguard-rules.pro"
             done
-
             find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
               sed -i -E "s/(isMinifyEnabled\s*=\s*)false/\1true/g" "$g_file"
               sed -i -E "s/(minifyEnabled\s+)false/\1true/g" "$g_file"
@@ -116,158 +177,56 @@ jobs:
           fi
 
           if [ -n "$MIN_SDK" ]; then
-            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
-              sed -i -E "s/(minSdk(Version)?\s*=\s*)[0-9]+/\1$MIN_SDK/g" "$g_file"
-              sed -i -E "s/(minSdk(Version)?\s+)[0-9]+/\1$MIN_SDK/g" "$g_file"
-              sed -i -E "s/(minSdk\s*\(\s*)[0-9]+(\s*\))/\1$MIN_SDK\2/g" "$g_file"
-              sed -i -E "s/(minSdk\.set\s*\(\s*)[0-9]+(\s*\))/\1$MIN_SDK\2/g" "$g_file"
-            done
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/(minSdk(Version)?\s*=\s*)[0-9]+/\1$MIN_SDK/g" {} +
           fi
-
           if [ -n "$VERSION_CODE" ]; then
-            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
-              sed -i -E "s/(versionCode\s*=\s*)[0-9]+/\1$VERSION_CODE/g" "$g_file"
-              sed -i -E "s/(versionCode\s+)[0-9]+/\1$VERSION_CODE/g" "$g_file"
-              sed -i -E "s/(versionCode\.set\s*\(\s*)[0-9]+(\s*\))/\1$VERSION_CODE\2/g" "$g_file"
-            done
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/(versionCode\s*=\s*)[0-9]+/\1$VERSION_CODE/g" {} +
           fi
-
           if [ -n "$VERSION_NAME" ]; then
-            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
-              sed -i -E "s/(versionName\s*=\s*)\"[^\"]+\"/\1\"$VERSION_NAME\"/g" "$g_file"
-              sed -i -E "s/(versionName\s+)\"[^\"]+\"/\1\"$VERSION_NAME\"/g" "$g_file"
-              sed -i -E "s/(versionName\.set\s*\(\s*)\"[^\"]+\"(\s*\))/\1\"$VERSION_NAME\"\2/g" "$g_file"
-            done
+            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) -exec sed -i -E "s/(versionName\s*=\s*)\"[^\"]+\"/\1\"$VERSION_NAME\"/g" {} +
           fi
         continue-on-error: true
 
-      # 🛡️ محرك التدقيق الأمني السيبراني المتقدم (Cybersecurity AppSec Engine)
-      - name: Advanced Cybersecurity Audit & Threat Remediation
+      - name: Apply Auto-Fix & XOR Obfuscation (If Approved)
         run: |
           AUTO_FIX="${{ github.event.client_payload.auto_fix }}"
-          if [ -z "$AUTO_FIX" ]; then AUTO_FIX="${{ github.event.client_payload.enable_security_shield }}"; fi
-          if [ -z "$AUTO_FIX" ]; then AUTO_FIX="true"; fi
+          if [ "$AUTO_FIX" == "true" ]; then
+            echo "🛡️ تطبيق الإصلاح والتشفير التلقائي للأكواد..."
+            cat << 'EOF' > fix.py
+            import os, re, random
 
-          echo "================================================================="
-          echo "🕵️‍♂️ بدء التدقيق السيبراني الشامل (Cybersecurity Threat Audit)..."
-          echo "================================================================="
+            def xor_obfuscate(text):
+                k = random.randint(110, 245)
+                b = [str(ord(c) ^ k) for c in text]
+                return f"String(byteArrayOf({', '.join(b)}).map {{ (it.toInt() xor {k}).toByte() }}.toByteArray())"
 
-          cat << 'EOF' > cyber_sentinel.py
-          import os
-          import sys
-          import re
-          import random
+            # 1. إصلاح AndroidManifest
+            for root, _, files in os.walk("project_dir"):
+                for file in files:
+                    if file == "AndroidManifest.xml":
+                        p = os.path.join(root, file)
+                        with open(p, "r", encoding="utf-8") as f:
+                            c = f.read().replace('android:usesCleartextTraffic="true"', 'android:usesCleartextTraffic="false"').replace('android:allowBackup="true"', 'android:allowBackup="false"')
+                        with open(p, "w", encoding="utf-8") as f:
+                            f.write(c)
 
-          auto_fix = sys.argv[1].lower() == "true"
-
-          def xor_obfuscate(text):
-              key = random.randint(110, 245)
-              bytes_arr = [str(ord(c) ^ key) for c in text]
-              return f"String(byteArrayOf({', '.join(bytes_arr)}).map {{ (it.toInt() xor {key}).toByte() }}.toByteArray())"
-
-          critical_risks = []
-          remediated_count = 0
-
-          # 1. تدقيق ملفات AndroidManifest وسلوك النظام والذاكرة
-          for root, _, files in os.walk("project_dir"):
-              for file in files:
-                  if file == "AndroidManifest.xml":
-                      m_path = os.path.join(root, file)
-                      with open(m_path, "r", encoding="utf-8", errors="ignore") as f:
-                          manifest = f.read()
-
-                      # ثغرة سحب البيانات عبر adb backup
-                      if 'android:allowBackup="true"' in manifest:
-                          critical_risks.append("🚨 [High Risk] تم رصد allowBackup=true (يتيح سحب بيانات التطبيق وقواعد البيانات عبر ADB)")
-                          if auto_fix:
-                              manifest = manifest.replace('android:allowBackup="true"', 'android:allowBackup="false"')
-                              remediated_count += 1
-
-                      # ثغرة السماح باتصالات HTTP غير مشفرة (Man-In-The-Middle)
-                      if 'android:usesCleartextTraffic="true"' in manifest:
-                          critical_risks.append("🚨 [Critical Risk] تفعيل usesCleartextTraffic (تسريب بيانات المستخدم عبر اتصالات HTTP غير مشفرة)")
-                          if auto_fix:
-                              manifest = manifest.replace('android:usesCleartextTraffic="true"', 'android:usesCleartextTraffic="false"')
-                              remediated_count += 1
-
-                      # ثغرة المكونات المصدرة بدون أذونات حماية
-                      if re.search(r'<(activity|service|receiver)[^>]+android:exported="true"[^>]*>(?!.*android:permission)', manifest):
-                          critical_risks.append("⚠️ [Medium Risk] تم رصد مكونات عامة (Exported) بدون حماية بـ Permission")
-
-                      if auto_fix:
-                          with open(m_path, "w", encoding="utf-8") as f:
-                              f.write(manifest)
-
-          # 2. تدقيق الأكواد المصدرية (Source Code Static Analysis)
-          secret_signatures = [
-              (r'(AIzaSy[0-9A-Za-z-_]{33})', "مفتاح Firebase API مكشوف"),
-              (r'(password|passwd|pass|admin_pass|secret_key|api_secret)\s*(=|:)\s*"([^"]{4,})"', "كلمة مرور أو توكن مصادقة صريح"),
-              (r'(db_password|database_pass|db_secret)\s*(=|:)\s*"([^"]{4,})"', "بيانات اعتماد قاعدة بيانات"),
-              (r'(ghp_[0-9a-zA-Z]{36})', "رمز وصول شخصي لـ GitHub مسرب"),
-          ]
-
-          for root, dirs, files in os.walk("project_dir"):
-              dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
-              for file in files:
-                  if file.endswith(('.kt', '.java')):
-                      f_path = os.path.join(root, file)
-                      with open(f_path, "r", encoding="utf-8", errors="ignore") as f:
-                          content = f.read()
-
-                      modified = False
-
-                      # فحص تسريب السجلات (Log Leaks)
-                      if re.search(r'Log\.(d|v|i|e|w)\(', content):
-                          critical_risks.append(f"ℹ️ [Information Leak] استخدام نصوص Log صريحة قد تكشف تدفق البيانات في ({file})")
-
-                      # فحص وتشفير النصوص الحساسة
-                      for pattern, label in secret_signatures:
-                          matches = list(re.finditer(pattern, content, re.IGNORECASE))
-                          for m in matches:
-                              if len(m.groups()) >= 3:
-                                  v_name, op, v_val = m.group(1), m.group(2), m.group(3)
-                                  if v_val.lower() in ["", "true", "false", "default", "null"]:
-                                      continue
-                                  if auto_fix:
-                                      content = content.replace(m.group(0), f"{v_name} {op} {xor_obfuscate(v_val)}")
-                                      modified = True
-                                      remediated_count += 1
-                                      critical_risks.append(f"🔒 [Remediated] تم تشفير {label} للمتغير [{v_name}] في ({file})")
-                                  else:
-                                      critical_risks.append(f"🚨 [Detected] {label} مكشوف للمتغير [{v_name}] في ({file})")
-                              elif len(m.groups()) == 1:
-                                  val = m.group(1)
-                                  if auto_fix:
-                                      content = content.replace(val, xor_obfuscate(val))
-                                      modified = True
-                                      remediated_count += 1
-                                      critical_risks.append(f"🔒 [Remediated] تم تشفير {label} في ({file})")
-                                  else:
-                                      critical_risks.append(f"🚨 [Detected] {label} في ({file})")
-
-                      if modified and auto_fix:
-                          with open(f_path, "w", encoding="utf-8") as f:
-                              f.write(content)
-
-          # 3. إعداد تقرير الخبير النهائي
-          print("\n" + "═"*65)
-          print("🛡️ تقرير التدقيق السيبراني المتقدم (Cyber Sentinel Security Audit)")
-          print("═"*65)
-          if critical_risks:
-              for threat in critical_risks:
-                  print(f"  • {threat}")
-          else:
-              print("  ✅ [PASSED] لا توجد ثغرات صريحة أو نصوص حساسة مكشوفة في الكود.")
-
-          if auto_fix:
-              print(f"\n🎯 تم بنجاح إغلاق وتشفير وتحصين: {remediated_count} نقطة ضعف أمنية.")
-          else:
-              print("\n⚠️ تم إيقاف الإصلاح التلقائي بناءً على طلبك (بناء بالكود الأصلي).")
-          print("═"*65 + "\n")
-          EOF
-
-          python3 cyber_sentinel.py "$AUTO_FIX"
-          rm cyber_sentinel.py
+            # 2. تشفير الكود وتحويل const val إلى val لمنع أخطاء التجميع
+            pattern = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]*(?:password|passwd|pass|admin_pass|secret_key|api_secret|db_password)[a-zA-Z0-9_]*)\s*=\s*"([^"]{4,})"'
+            for root, dirs, files in os.walk("project_dir"):
+                dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
+                for file in files:
+                    if file.endswith(('.kt', '.java')):
+                        p = os.path.join(root, file)
+                        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                            c = f.read()
+                        new_c = re.sub(pattern, lambda m: f"val {m.group(2)} = {xor_obfuscate(m.group(3))}", c)
+                        if new_c != c:
+                            with open(p, "w", encoding="utf-8") as f:
+                                f.write(new_c)
+            EOF
+            python3 fix.py
+            rm fix.py
+          fi
         continue-on-error: true
 
       - name: Setup Gradle 9.3.1
@@ -275,10 +234,8 @@ jobs:
           SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
-
           gradle wrapper --gradle-version 9.3.1 --distribution-type bin || true
           chmod +x ./gradlew
-
           echo "android.suppressUnsupportedCompileSdk=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
           echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m" >> gradle.properties
@@ -287,18 +244,11 @@ jobs:
       - name: Replace Custom App Icon Cleanly
         run: |
           BUILD_ID="${{ github.event.client_payload.build_id }}"
-          ICON_FILE=$(find . -type f -name "*${BUILD_ID}*.png" | head -n 1)
-          if [ -z "$ICON_FILE" ]; then
-            ICON_FILE=$(find . -type f -name "*.png" -not -path "*/project_dir/*" | head -n 1)
-          fi
-
+          ICON_FILE=$(find uploads -type f -name "*${BUILD_ID}*.png" 2>/dev/null | head -n 1)
           if [ -n "$ICON_FILE" ]; then
             find project_dir -type d -name "*anydpi*" -exec rm -rf {} +
             find project_dir -type d \( -name "mipmap-*" -o -name "drawable-*" \) | while read -r res_dir; do
-              rm -f "$res_dir"/ic_launcher*.xml
-              rm -f "$res_dir"/ic_launcher*.webp
-              rm -f "$res_dir"/ic_launcher*.png
-              
+              rm -f "$res_dir"/ic_launcher*.xml "$res_dir"/ic_launcher*.webp "$res_dir"/ic_launcher*.png
               cp -f "$ICON_FILE" "$res_dir/ic_launcher.png"
               cp -f "$ICON_FILE" "$res_dir/ic_launcher_round.png"
               cp -f "$ICON_FILE" "$res_dir/ic_launcher_foreground.png"
@@ -319,7 +269,6 @@ jobs:
 
           chmod +x ./gradlew
           BUILD_TYPE="${{ github.event.client_payload.build_type }}"
-          BUILD_ID="${{ github.event.client_payload.build_id }}"
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           ENABLE_MINIFY="${{ github.event.client_payload.enable_minify }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
@@ -341,24 +290,11 @@ jobs:
             FINAL_NAME="${PROJECT_NAME}.apk"
           fi
 
-          if [ -z "$OUT_FILE" ]; then
-            echo "Error: Output file not found!"
-            exit 1
-          fi
+          if [ -z "$OUT_FILE" ]; then exit 1; fi
 
           cp "$OUT_FILE" "$GITHUB_WORKSPACE/$FINAL_NAME"
           echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
-
           ./gradlew signingReport --no-daemon | grep -E "Variant: debug|Variant: release|SHA1:" || true
-
-      # خطوة استخراج السبب الحقيقي للخطأ عند الفشل لسهولة تشخيصه
-      - name: Extract Exact Failure Cause
-        if: failure()
-        run: |
-          echo "=========================================="
-          echo "❌ [ROOT CAUSE] السبب الدقيق لفشل البناء:"
-          echo "=========================================="
-          find . -name "*.log" -exec grep -Hn -E "\* What went wrong:|Execution failed for task|Compilation error" {} + 2>/dev/null || true
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -370,37 +306,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # خطوة تفريغ مجلد uploads وحذف كافة الملفات المؤقتة مع الإبقاء على المجلد نظيفاً
       - name: Force Clean Uploads Content Cleanly
         if: always()
         run: |
-          echo "🧹 جاري تفريغ محتويات مجلد uploads وتنظيف المستودع..."
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # مزامنة أحدث حالة من المستودع
           git fetch origin main || git fetch origin master || true
           git checkout main 2>/dev/null || git checkout master 2>/dev/null || true
           git reset --hard origin/HEAD 2>/dev/null || true
-          
-          # تفريغ جميع الملفات الموجودة داخل مجلد uploads
-          if [ -d "uploads" ]; then
-            find uploads -type f -not -name ".gitkeep" -exec git rm -f {} + 2>/dev/null || true
-          fi
-          
-          # حذف أي ملفات مضغوطة أو صور في المجلد الرئيسي
+          if [ -d "uploads" ]; then find uploads -type f -not -name ".gitkeep" -exec git rm -f {} + 2>/dev/null || true; fi
           find . -maxdepth 1 -type f \( -name "*.zip" -o -name "*.png" \) -exec git rm -f {} + 2>/dev/null || true
-          
-          # الحفاظ على وجود مجلد uploads كفولدر فارغ ومنظم
-          mkdir -p uploads
-          touch uploads/.gitkeep
-          git add uploads/.gitkeep 2>/dev/null || true
-          
-          # تثبيت الحذف ودفع التحديث
+          mkdir -p uploads && touch uploads/.gitkeep && git add uploads/.gitkeep 2>/dev/null || true
           if ! git diff --cached --quiet; then
-            git commit -m "Auto-clean: emptied uploads directory [skip ci]"
+            git commit -m "Auto-clean uploads [skip ci]"
             git push origin HEAD
-            echo "✅ تم تفريغ مجلد uploads بالكامل بنجاح!"
-          else
-            echo "ℹ️ المجلد نظيف بالفعل."
           fi
