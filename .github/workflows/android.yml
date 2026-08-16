@@ -88,7 +88,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # 🛡️ إجبار التشفير الشامل لكل المتغيرات والنصوص تلقائياً 100%
+      # 🛡️ إجبار التشفير الشامل لكل المتغيرات والنصوص (تم تصحيح كود Python بالكامل)
       - name: Force Military Universal String Encryption & R8 Hardening
         run: |
           echo "================================================================="
@@ -124,6 +124,17 @@ jobs:
           # 2. تشفير كافة المتغيرات النصية في ملفات Kotlin وتحويلها إلى Dynamic Getters
           pattern_kt = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*(?::\s*String)?\s*=\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
 
+          def repl_kt(match):
+              global secured_count
+              var_name = match.group(2)
+              str_val = match.group(3)
+
+              if str_val in ["", " "]:
+                  return match.group(0)
+
+              secured_count += 1
+              return f"val {var_name}: String get() = {polymorphic_xor(str_val)}"
+
           for root, dirs, files in os.walk("project_dir"):
               dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
               for file in files:
@@ -132,24 +143,9 @@ jobs:
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           content = f.read()
 
-                      modified = False
-
-                      def repl_kt(match):
-                          nonlocal modified, secured_count
-                          var_name = match.group(2)
-                          str_val = match.group(3)
-
-                          if str_val in ["", " "]:
-                              return match.group(0)
-
-                          modified = True
-                          secured_count += 1
-                          # استخدام get() يمنع كتابة النص الصريح في الـ Header Field بالـ Dex
-                          return f"val {var_name}: String get() = {polymorphic_xor(str_val)}"
-
                       new_content = re.sub(pattern_kt, repl_kt, content)
 
-                      if modified:
+                      if new_content != content:
                           with open(p, "w", encoding="utf-8") as f:
                               f.write(new_content)
 
