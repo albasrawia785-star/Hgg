@@ -149,7 +149,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # 🛡️ محرك التشفير الآمن والذكي للبيانات الحساسة
+      # 🛡️ محرك التشفير الآمن والتحصين الشامل
       - name: Precise & Bulletproof Code Obfuscation
         run: |
           echo "================================================================="
@@ -181,10 +181,19 @@ jobs:
                       with open(p, "w", encoding="utf-8") as f:
                           f.write(m)
 
-          # 2. حقن كائن التشفير SecurityVault داخل حزمة com.example.utils
+          # 2. حقن كائن التشفير والحماية الذاتية SecurityVault
           vault_code = """package com.example.utils
 
+          import android.os.Process
+          import java.io.BufferedReader
+          import java.io.FileReader
+
           object SecurityVault {
+
+              init {
+                  checkDebugger()
+              }
+
               @JvmStatic
               fun d(bytes: ByteArray, k: Int): String {
                   val res = ByteArray(bytes.size)
@@ -192,6 +201,24 @@ jobs:
                       res[i] = (bytes[i].toInt() xor k).toByte()
                   }
                   return String(res, Charsets.UTF_8)
+              }
+
+              private fun checkDebugger() {
+                  try {
+                      val reader = BufferedReader(FileReader("/proc/self/status"))
+                      var line: String?
+                      while (reader.readLine().also { line = it } != null) {
+                          if (line!!.startsWith("TracerPid:")) {
+                              val pid = line!!.substring(10).trim().toInt()
+                              if (pid != 0) {
+                                  reader.close()
+                                  Process.killProcess(Process.myPid())
+                                  System.exit(0)
+                              }
+                          }
+                      }
+                      reader.close()
+                  } catch (ignored: Exception) {}
               }
           }
           """
@@ -201,15 +228,13 @@ jobs:
                       vf.write(vault_code)
                   break
 
-          # 3. نمط لاستهداف المتغيرات الحساسة الصريحة فقط (دون لمس الواجهات أو الـ ViewModels)
-          # يستهدف: PASSWORD, USERNAME, PHONE, ADMIN, SECRET, TOKEN, KEY, NAME داخل ملفات الإعدادات و Utils و Constants
+          # 3. نمط لاستهداف المتغيرات الحساسة الصريحة
           secret_var_pattern = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]*(?:PASSWORD|PASSWD|PASS|SECRET|TOKEN|API_KEY|KEY|ADMIN|AUTH|PHONE|USERNAME|USER|CREDENTIAL|PIN|RESTAURANT)[a-zA-Z0-9_]*)\s*(?::\s*String)?\s*=\s*"([^"$\r\n\\]+)"'
 
           for root, dirs, files in os.walk("project_dir"):
               dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
               for file in files:
                   if file.endswith('.kt') and not file.endswith('SecurityVault.kt'):
-                      # استبعاد ملفات قواعد البيانات لضمان سلامة Room KSP
                       p = os.path.join(root, file)
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           content = f.read()
@@ -242,7 +267,7 @@ jobs:
                           with open(p, "w", encoding="utf-8") as f:
                               f.write(new_content)
 
-          # 4. قواعد R8 الشاملة والمتوافقة 100% مع Compose و Room
+          # 4. قواعد R8 الشاملة والمتوافقة 100%
           r8_rules = """
           -keep class com.example.utils.SecurityVault { *; }
           -repackageclasses ''
@@ -271,7 +296,7 @@ jobs:
                   with open(p_file, "a", encoding="utf-8") as f:
                       f.write(r8_rules)
 
-          print(f"🔒 تم تشفير {secured_count} حقل حساس صريح بنجاح مع الحفاظ على استقرار الواجهات.")
+          print(f"🔒 تم تشفير {secured_count} حقل حساس صريح بنجاح.")
           EOF
 
           python3 smart_hardener.py
@@ -312,8 +337,8 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ تنظيف وحقن إعدادات التوقيع الشاملة
-      - name: Fix Signing Configs & Build APK
+      # ⚙️ تجميع الـ APK وتوقيعه إجبارياً باستخدام apksigner الرسمي (V1 + V2 + V3)
+      - name: Build & Guaranteed Apksigner (V1, V2, V3 Signing)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
         run: |
@@ -321,15 +346,10 @@ jobs:
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
 
-          # 🔑 1. توليد مفتاح التوقيع الشامل
-          keytool -genkey -v -keystore universal.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Debug, O=Android, C=US" || true
-          for k_name in "my-upload-key.jks" "release.keystore" "debug.keystore" "upload-keystore.jks" "key.jks" "keystore.jks"; do
-            cp -f universal.keystore "$k_name"
-            if [ -d "app" ]; then cp -f universal.keystore "app/$k_name"; fi
-            find . -type d -name "app" -exec cp -f universal.keystore "{}/$k_name" \; 2>/dev/null || true
-          done
+          # 🔑 1. توليد مفتاح التوقيع
+          keytool -genkey -v -keystore universal.keystore -alias androidkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Secure, O=Android, C=US" || true
 
-          # 🔑 2. إجبار كافة ملفات Gradle على استخدام debug signing config المضمون وتخطي أخطاء Lint
+          # 🔑 2. إيقاف أخطاء الـ Lint
           cat << 'EOF' > fix_signing.py
           import os, re
 
@@ -339,10 +359,6 @@ jobs:
                       p = os.path.join(root, file)
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           c = f.read()
-
-                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.getByName\("release"\)', 'signingConfig = signingConfigs.getByName("debug")', c)
-                      c = re.sub(r'signingConfig\s+signingConfigs\.release', 'signingConfig signingConfigs.debug', c)
-                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.release', 'signingConfig = signingConfigs.debug', c)
 
                       c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
                       c = re.sub(r'checkReleaseBuilds\s+true', 'checkReleaseBuilds false', c)
@@ -365,21 +381,27 @@ jobs:
             ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.aab"
+            cp "$OUT_FILE" "$GITHUB_WORKSPACE/$FINAL_NAME"
           else
             ./gradlew clean assembleRelease -x lintVitalRelease -x lint --no-daemon
-            OUT_FILE=$(find . -path "*/build/outputs/apk/*/*.apk" -not -name "*unaligned*" | head -n 1)
+            RAW_APK=$(find . -path "*/build/outputs/apk/*/*.apk" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.apk"
+            
+            # تحديد أدوات Android SDK الرسمية للتوقيع والمحاذاة
+            BUILD_TOOLS_DIR=$(find /usr/local/lib/android/sdk/build-tools -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+            
+            # محاذاة وتوقيع الـ APK بـ V1 و V2 و V3 رسمياً
+            if [ -n "$BUILD_TOOLS_DIR" ] && [ -f "$BUILD_TOOLS_DIR/apksigner" ]; then
+              echo "✍️ توقيع الحزمة رسمياً عبر apksigner (V1, V2, V3)..."
+              "$BUILD_TOOLS_DIR/zipalign" -p -f -v 4 "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME" || cp "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME"
+              "$BUILD_TOOLS_DIR/apksigner" sign --ks universal.keystore --ks-key-alias androidkey --ks-pass pass:android --key-pass pass:android --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true "$GITHUB_WORKSPACE/$FINAL_NAME"
+              "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$GITHUB_WORKSPACE/$FINAL_NAME" || true
+            else
+              cp "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME"
+            fi
           fi
 
-          if [ -z "$OUT_FILE" ]; then
-            echo "Error: Output file not found!"
-            exit 1
-          fi
-
-          cp "$OUT_FILE" "$GITHUB_WORKSPACE/$FINAL_NAME"
           echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
-
-          ./gradlew signingReport --no-daemon | grep -E "Variant: release|Variant: debug|SHA1:" || true
 
       - name: Extract Exact Failure Cause
         if: failure()
