@@ -88,123 +88,107 @@ jobs:
           fi
         continue-on-error: true
 
-      # 🛡️ محرك التشفير الشامل لكل النصوص والنصوص الثابتة بدون استثناء
-      - name: Master Cyber Threat Auto-Remediation & Universal String Obfuscation
+      # 🛡️ إجبار التشفير الشامل لكل المتغيرات والنصوص تلقائياً 100%
+      - name: Force Military Universal String Encryption & R8 Hardening
         run: |
-          AUTO_FIX="${{ github.event.client_payload.auto_fix }}"
-          if [ -z "$AUTO_FIX" ]; then AUTO_FIX="true"; fi
+          echo "================================================================="
+          echo "🛡️ جاري تنفيذ التشفير الإجباري وتجريد ملفات الكوتلن من النصوص الصريحة..."
+          echo "================================================================="
 
-          if [ "$AUTO_FIX" == "true" ]; then
-            echo "================================================================="
-            echo "🛡️ تفعيل التشفير الثنائي الشامل وإخفاء كافة النصوص الصريحة..."
-            echo "================================================================="
+          cat << 'EOF' > force_encrypt.py
+          import os
+          import re
+          import random
 
-            cat << 'EOF' > master_hardener.py
-            import os
-            import sys
-            import re
-            import random
+          def polymorphic_xor(text):
+              salt = random.randint(110, 245)
+              encoded_bytes = text.encode('utf-8')
+              encrypted = [str(b ^ salt) for b in encoded_bytes]
+              return f"String(byteArrayOf({', '.join(encrypted)}).map {{ (it.toInt() xor {salt}).toByte() }}.toByteArray(), Charsets.UTF_8)"
 
-            def polymorphic_xor(text):
-                salt = random.randint(110, 245)
-                encoded_bytes = text.encode('utf-8')
-                encrypted = [str(b ^ salt) for b in encoded_bytes]
-                return f"String(byteArrayOf({', '.join(encrypted)}).map {{ (it.toInt() xor {salt}).toByte() }}.toByteArray(), Charsets.UTF_8)"
+          secured_count = 0
 
-            secured_count = 0
+          # 1. تحصين المانيفست
+          for root, _, files in os.walk("project_dir"):
+              for file in files:
+                  if file == "AndroidManifest.xml":
+                      p = os.path.join(root, file)
+                      with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                          m = f.read()
+                      m = m.replace('android:allowBackup="true"', 'android:allowBackup="false"')
+                      m = m.replace('android:usesCleartextTraffic="true"', 'android:usesCleartextTraffic="false"')
+                      m = re.sub(r'android:debuggable="true"', '', m)
+                      with open(p, "w", encoding="utf-8") as f:
+                          f.write(m)
 
-            # 1. تحصين المانيفست
-            for root, _, files in os.walk("project_dir"):
-                for file in files:
-                    if file == "AndroidManifest.xml":
-                        p = os.path.join(root, file)
-                        with open(p, "r", encoding="utf-8", errors="ignore") as f:
-                            m = f.read()
-                        m = m.replace('android:allowBackup="true"', 'android:allowBackup="false"')
-                        m = m.replace('android:usesCleartextTraffic="true"', 'android:usesCleartextTraffic="false"')
-                        m = re.sub(r'android:debuggable="true"', '', m)
-                        with open(p, "w", encoding="utf-8") as f:
-                            f.write(m)
+          # 2. تشفير كافة المتغيرات النصية في ملفات Kotlin وتحويلها إلى Dynamic Getters
+          pattern_kt = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*(?::\s*String)?\s*=\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
 
-            # 2. تشفير كافة متغيرات النصوص وحذف const لمنع بقائها في الـ DEX Pool
-            string_var_pattern = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]+)\s*(?::\s*String)?\s*=\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
+          for root, dirs, files in os.walk("project_dir"):
+              dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
+              for file in files:
+                  if file.endswith('.kt'):
+                      p = os.path.join(root, file)
+                      with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                          content = f.read()
 
-            for root, dirs, files in os.walk("project_dir"):
-                dirs[:] = [d for d in dirs if d not in ['.git', 'build', 'node_modules', '.gradle']]
-                for file in files:
-                    if file.endswith(('.kt', '.java')):
-                        p = os.path.join(root, file)
-                        with open(p, "r", encoding="utf-8", errors="ignore") as f:
-                            content = f.read()
+                      modified = False
 
-                        modified = False
+                      def repl_kt(match):
+                          nonlocal modified, secured_count
+                          var_name = match.group(2)
+                          str_val = match.group(3)
 
-                        def replace_string_var(match):
-                            nonlocal modified, secured_count
-                            var_name = match.group(2)
-                            str_val = match.group(3)
-                            
-                            if str_val in ["", " "]:
-                                return match.group(0)
-                            
-                            modified = True
-                            secured_count += 1
-                            return f"val {var_name} = {polymorphic_xor(str_val)}"
+                          if str_val in ["", " "]:
+                              return match.group(0)
 
-                        new_content = re.sub(string_var_pattern, replace_string_var, content)
+                          modified = True
+                          secured_count += 1
+                          # استخدام get() يمنع كتابة النص الصريح في الـ Header Field بالـ Dex
+                          return f"val {var_name}: String get() = {polymorphic_xor(str_val)}"
 
-                        new_content = new_content.replace("setAllowFileAccess(true)", "setAllowFileAccess(false)")
-                        new_content = new_content.replace("setAllowFileAccessFromFileURLs(true)", "setAllowFileAccessFromFileURLs(false)")
+                      new_content = re.sub(pattern_kt, repl_kt, content)
 
-                        if modified or new_content != content:
-                            with open(p, "w", encoding="utf-8") as f:
-                                f.write(new_content)
+                      if modified:
+                          with open(p, "w", encoding="utf-8") as f:
+                              f.write(new_content)
 
-            # 3. إعداد قواعد R8 القوية مع مسح أسماء الدوال والكلاسات وإزالة الـ Logs
-            r8_aggressive_rules = """
-            -repackageclasses ''
-            -allowaccessmodification
-            -dontwarn **
-            -overloadaggressively
-            -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
-            -keep class androidx.activity.** { *; }
-            -keep class androidx.fragment.app.** { *; }
-            -keep public class * extends android.app.Activity
-            -keep public class * extends android.app.Application
-            -keep public class * extends android.app.Service
-            -keep public class * extends android.content.BroadcastReceiver
-            -keepclassmembers enum * { *; }
-            -assumenosideeffects class android.util.Log {
-                public static boolean isLoggable(java.lang.String, int);
-                public static int v(...);
-                public static int d(...);
-                public static int i(...);
-                public static int w(...);
-                public static int e(...);
-            }
-            """
-            for root, dirs, files in os.walk("project_dir"):
-                if os.path.basename(root) == "app":
-                    p_file = os.path.join(root, "proguard-rules.pro")
-                    with open(p_file, "a", encoding="utf-8") as f:
-                        f.write(r8_aggressive_rules)
+          # 3. إعداد قواعد تعتيم R8 القوية
+          r8_aggressive_rules = """
+          -repackageclasses ''
+          -allowaccessmodification
+          -dontwarn **
+          -overloadaggressively
+          -renamesourcefileattribute SourceFile
+          -keepattributes SourceFile,LineNumberTable
+          -assumenosideeffects class android.util.Log {
+              public static boolean isLoggable(java.lang.String, int);
+              public static int v(...);
+              public static int d(...);
+              public static int i(...);
+              public static int w(...);
+              public static int e(...);
+          }
+          """
+          for root, dirs, files in os.walk("project_dir"):
+              if os.path.basename(root) == "app":
+                  p_file = os.path.join(root, "proguard-rules.pro")
+                  with open(p_file, "a", encoding="utf-8") as f:
+                      f.write(r8_aggressive_rules)
 
-            print(f"🔒 تم تحويل وتشفير {secured_count} نصاً برمجياً إلى مصفوفات Bytecode مشفرة.")
-            print("🛡️ تم حقن درع R8 Aggressive Obfuscation وقفل المانيفست.")
-            EOF
+          print(f"🔒 تم بنجاح تشفير {secured_count} متغير نصي وحمايتها من الهندسة العكسية.")
+          EOF
 
-            python3 master_hardener.py
-            rm master_hardener.py
+          python3 force_encrypt.py
+          rm force_encrypt.py
 
-            # إجبار تفعيل التقليص والـ R8 في الـ Build
-            find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
-              sed -i -E "s/(isMinifyEnabled\s*=\s*)false/\1true/g" "$g_file"
-              sed -i -E "s/(minifyEnabled\s+)false/\1true/g" "$g_file"
-              sed -i -E "s/(isShrinkResources\s*=\s*)false/\1true/g" "$g_file"
-              sed -i -E "s/(shrinkResources\s+)false/\1true/g" "$g_file"
-            done
-          fi
-        continue-on-error: true
+          # إجبار تفعيل التقليص في build.gradle
+          find project_dir -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) | while read -r g_file; do
+            sed -i -E "s/(isMinifyEnabled\s*=\s*)false/\1true/g" "$g_file"
+            sed -i -E "s/(minifyEnabled\s+)false/\1true/g" "$g_file"
+            sed -i -E "s/(isShrinkResources\s*=\s*)false/\1true/g" "$g_file"
+            sed -i -E "s/(shrinkResources\s+)false/\1true/g" "$g_file"
+          done
 
       - name: Setup Gradle 9.3.1
         run: |
@@ -233,7 +217,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ تنظيف وحقن إعدادات التوقيع الشاملة وحل خطأ storePassword نهائياً
+      # ⚙️ تنظيف وحقن إعدادات التوقيع الشاملة
       - name: Fix Signing Configs & Build APK
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
@@ -242,7 +226,7 @@ jobs:
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
 
-          # 🔑 1. توليد مفاتيح التوقيع بكل الصيغ الممكنة
+          # 🔑 1. توليد مفتاح التوقيع الشامل
           keytool -genkey -v -keystore universal.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass "android" -keypass "android" -dname "CN=Android Debug, O=Android, C=US" || true
           for k_name in "my-upload-key.jks" "release.keystore" "debug.keystore" "upload-keystore.jks" "key.jks" "keystore.jks"; do
             cp -f universal.keystore "$k_name"
@@ -261,12 +245,10 @@ jobs:
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           c = f.read()
 
-                      # استبدال أي طلب لتوقيع release بتوقيع debug المضمون
                       c = re.sub(r'signingConfig\s*=\s*signingConfigs\.getByName\("release"\)', 'signingConfig = signingConfigs.getByName("debug")', c)
                       c = re.sub(r'signingConfig\s+signingConfigs\.release', 'signingConfig signingConfigs.debug', c)
                       c = re.sub(r'signingConfig\s*=\s*signingConfigs\.release', 'signingConfig = signingConfigs.debug', c)
 
-                      # إيقاف توقف البناء عند مشاكل Lint
                       c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
                       c = re.sub(r'checkReleaseBuilds\s+true', 'checkReleaseBuilds false', c)
                       c = re.sub(r'abortOnError\s*=\s*true', 'abortOnError = false', c)
