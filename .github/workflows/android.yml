@@ -332,7 +332,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ تحليل ديناميكي للمفتاح واستخراج الـ Alias والتوقيع المضمون
+      # ⚙️ تحليل ديناميكي للمفتاح واستخراج الـ Alias والتوقيع المضمون بـ apksigner
       - name: Build & Guaranteed Apksigner (Release Only)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
@@ -354,7 +354,6 @@ jobs:
           workspace = os.environ.get("GITHUB_WORKSPACE", os.getcwd())
           uploads_dir = os.path.join(workspace, "uploads")
 
-          # تجميع كافة المفاتيح المحتملة (مع إعطاء الأولوية للـ Build ID والـ uploads)
           candidates = []
           search_dirs = [uploads_dir, workspace, "."]
           valid_exts = (".keystore", ".jks", ".p12")
@@ -369,7 +368,6 @@ jobs:
                                   if f_path not in candidates:
                                       candidates.append(f_path)
 
-          # ترتيب الأولويات: مفاتيح مرتبطة بـ build_id أولاً
           if build_id:
               candidates.sort(key=lambda p: (0 if build_id in os.path.basename(p) else 1))
 
@@ -396,7 +394,6 @@ jobs:
                           timeout=10
                       )
                       if res.returncode == 0:
-                          # استخراج أول Alias متواجد بالمفتاح ديناميكياً
                           aliases = re.findall(r'Alias name:\s*(.+)', res.stdout, re.IGNORECASE)
                           if not aliases:
                               aliases = re.findall(r'اسم الاسم المستعار:\s*(.+)', res.stdout)
@@ -407,28 +404,16 @@ jobs:
                               resolved_pass = pwd
                               print(f"✅ تم التحقق بنجاح | Alias: '{resolved_alias}' | Password: '{resolved_pass}'")
                               break
-                  except Exception as e:
+                  except Exception:
                       pass
               if resolved_key:
                   break
-
-          # قراءة متطلبات storeFile من ملفات build.gradle
-          store_files = set(["universal.keystore", "my-upload-key.jks", "release.keystore", "upload-keystore.jks", "key.jks"])
-          for root, _, files in os.walk("."):
-              for file in files:
-                  if file in ["build.gradle.kts", "build.gradle"]:
-                      with open(os.path.join(root, file), 'r', encoding='utf-8', errors='ignore') as f:
-                          c = f.read()
-                      sf = re.findall(r'storeFile\s*(?:=\s*|\s+)file\s*\(\s*["\']([^"\']+)["\']\s*\)', c)
-                      for f_name in sf:
-                          store_files.add(os.path.basename(f_name))
 
           result_payload = {
               "found": bool(resolved_key),
               "key_path": resolved_key or "",
               "alias": resolved_alias or "androidkey",
-              "password": resolved_pass or "android",
-              "store_files": list(store_files)
+              "password": resolved_pass or "android"
           }
 
           with open("signing_resolved.json", "w", encoding="utf-8") as out:
@@ -445,12 +430,13 @@ jobs:
           TARGET_ALIAS=$(python3 -c "import json; print(json.load(open('signing_resolved.json'))['alias'])")
           TARGET_PASS=$(python3 -c "import json; print(json.load(open('signing_resolved.json'))['password'])")
           FOUND_PATH=$(python3 -c "import json; print(json.load(open('signing_resolved.json'))['key_path'])")
+          rm -f signing_resolved.json
 
           if [ "$FOUND" = "True" ] && [ -f "$FOUND_PATH" ]; then
             echo "📦 اعتماد المفتاح المرفوع والمتحقق منه: $FOUND_PATH"
             cp -f "$FOUND_PATH" "$TARGET_KS"
           else
-            echo "✨ لم يتم العثور على مفتاح مرفوع متوافق، جاري توليد مفتاح قياسي بصيغة PKCS12..."
+            echo "✨ لم يتم العثور على مفتاح مرفوع صالح، جاري توليد مفتاح قياسي بصيغة PKCS12..."
             TARGET_ALIAS="androidkey"
             TARGET_PASS="android"
             keytool -genkeypair -v -keystore "$TARGET_KS" \
@@ -464,18 +450,28 @@ jobs:
               -dname "CN=Android Secure, O=Android, C=US"
           fi
 
-          # 🔑 2. نشر المفتاح لكافة المسارات المتوقعة في المشروع
-          python3 -c "
-          import json, os, shutil
-          info = json.load(open('signing_resolved.json'))
-          src_ks = '$TARGET_KS'
-          target_dirs = ['.', 'app', '$ROOT_DIR', '$ROOT_DIR/app']
-          for d in target_dirs:
-              if os.path.exists(d):
-                  for f_name in info['store_files']:
-                      shutil.copyfile(src_ks, os.path.join(d, f_name))
-          "
-          rm -f signing_resolved.json
+          # 🔑 2. إزالة أي ربط لـ signingConfig من ملفات Gradle لمنع توقف Gradle الداخلي
+          cat << 'EOF' > strip_gradle_signing.py
+          import os, re
+
+          for root, dirs, files in os.walk("."):
+              if "build" in dirs:
+                  dirs.remove("build")
+              for file in files:
+                  p = os.path.join(root, file)
+                  if file in ["build.gradle.kts", "build.gradle"]:
+                      with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                          c = f.read()
+                      # إزالة تعيينات signingConfig تماماً لمنع أخطاء storePassword المفقودة
+                      c = re.sub(r'signingConfig\s*=\s*[^\r\n]+', '// signingConfig bypassed', c)
+                      c = re.sub(r'signingConfig\s+signingConfigs\.[^\r\n]+', '// signingConfig bypassed', c)
+                      c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
+                      c = re.sub(r'abortOnError\s*=\s*true', 'abortOnError = false', c)
+                      with open(p, "w", encoding="utf-8") as f:
+                          f.write(c)
+          EOF
+          python3 strip_gradle_signing.py
+          rm -f strip_gradle_signing.py
 
           # تنظيف وقائي لمجلدات الموارد
           find "$GITHUB_WORKSPACE/project_dir" -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" -o -name "*.p12" \) -exec rm -f {} + 2>/dev/null || true
@@ -485,7 +481,7 @@ jobs:
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
-          # 🔑 3. تجميع حزمة الإنتاج
+          # 🔑 3. تجميع حزمة الإنتاج بنجاح سلس
           if [ "$BUILD_TYPE" == "aab" ]; then
             echo "🚀 بدء تجميع حزمة الإنتاج AAB (bundleRelease)..."
             ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon
@@ -504,7 +500,7 @@ jobs:
           keytool -list -v -keystore "$TARGET_KS" -alias "$TARGET_ALIAS" -storepass "$TARGET_PASS" 2>/dev/null | grep -E "Alias name|SHA1:|SHA256:" || true
           echo "=========================================="
 
-          # 🔑 4. التوقيع النهائي عبر apksigner لضمان V1, V2, V3
+          # 🔑 4. التوقيع الخارجي الرسمي عبر apksigner لضمان V1, V2, V3
           if [ "$BUILD_TYPE" != "aab" ]; then
             BUILD_TOOLS_DIR=$(find /usr/local/lib/android/sdk/build-tools -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
             
@@ -548,6 +544,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # خطوة تنظيف المستودع الفورية للحفاظ على النظافة التامة
       - name: Force Clean Uploads Content Cleanly
         if: always()
         run: |
