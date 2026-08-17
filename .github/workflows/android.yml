@@ -332,7 +332,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ تجهيز المفتاح المعتمد وإتمام البناء والتوقيع عبر apksigner
+      # ⚙️ تحليل ديناميكي للمفتاح واستخراج الـ Alias والتوقيع المضمون
       - name: Build & Guaranteed Apksigner (Release Only)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
@@ -341,74 +341,151 @@ jobs:
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
 
-          # 🔑 1. تجهيز المفتاح المعتمد (التحقق من المرفوع أو إنشاء جديد سليم)
+          BUILD_ID="${{ github.event.client_payload.build_id }}"
+          CUSTOM_PASS="${{ github.event.client_payload.keystore_password }}"
+
+          # 🔑 1. محرك الفحص الديناميكي للمفتاح واستخراج الـ Alias وكلمة المرور
+          cat << 'EOF' > resolve_keystore.py
+          import os, subprocess, re, json, sys
+
+          build_id = sys.argv[1] if len(sys.argv) > 1 else ""
+          custom_pass = sys.argv[2] if len(sys.argv) > 2 else ""
+
+          workspace = os.environ.get("GITHUB_WORKSPACE", os.getcwd())
+          uploads_dir = os.path.join(workspace, "uploads")
+
+          # تجميع كافة المفاتيح المحتملة (مع إعطاء الأولوية للـ Build ID والـ uploads)
+          candidates = []
+          search_dirs = [uploads_dir, workspace, "."]
+          valid_exts = (".keystore", ".jks", ".p12")
+
+          for s_dir in search_dirs:
+              if os.path.exists(s_dir):
+                  for root, _, files in os.walk(s_dir):
+                      for file in files:
+                          if file.lower().endswith(valid_exts):
+                              f_path = os.path.abspath(os.path.join(root, file))
+                              if os.path.getsize(f_path) > 300:
+                                  if f_path not in candidates:
+                                      candidates.append(f_path)
+
+          # ترتيب الأولويات: مفاتيح مرتبطة بـ build_id أولاً
+          if build_id:
+              candidates.sort(key=lambda p: (0 if build_id in os.path.basename(p) else 1))
+
+          passwords_to_try = []
+          if custom_pass:
+              passwords_to_try.append(custom_pass)
+          for p in ["android", "123456", "password", "androidkey", "keypass", "secret"]:
+              if p not in passwords_to_try:
+                  passwords_to_try.append(p)
+
+          resolved_key = None
+          resolved_alias = None
+          resolved_pass = None
+
+          for cand in candidates:
+              print(f"🔍 فحص ملف المفتاح المكتشف: {cand}")
+              for pwd in passwords_to_try:
+                  try:
+                      res = subprocess.run(
+                          ["keytool", "-list", "-v", "-keystore", cand, "-storepass", pwd],
+                          stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE,
+                          text=True,
+                          timeout=10
+                      )
+                      if res.returncode == 0:
+                          # استخراج أول Alias متواجد بالمفتاح ديناميكياً
+                          aliases = re.findall(r'Alias name:\s*(.+)', res.stdout, re.IGNORECASE)
+                          if not aliases:
+                              aliases = re.findall(r'اسم الاسم المستعار:\s*(.+)', res.stdout)
+                          
+                          if aliases:
+                              resolved_key = cand
+                              resolved_alias = aliases[0].strip()
+                              resolved_pass = pwd
+                              print(f"✅ تم التحقق بنجاح | Alias: '{resolved_alias}' | Password: '{resolved_pass}'")
+                              break
+                  except Exception as e:
+                      pass
+              if resolved_key:
+                  break
+
+          # قراءة متطلبات storeFile من ملفات build.gradle
+          store_files = set(["universal.keystore", "my-upload-key.jks", "release.keystore", "upload-keystore.jks", "key.jks"])
+          for root, _, files in os.walk("."):
+              for file in files:
+                  if file in ["build.gradle.kts", "build.gradle"]:
+                      with open(os.path.join(root, file), 'r', encoding='utf-8', errors='ignore') as f:
+                          c = f.read()
+                      sf = re.findall(r'storeFile\s*(?:=\s*|\s+)file\s*\(\s*["\']([^"\']+)["\']\s*\)', c)
+                      for f_name in sf:
+                          store_files.add(os.path.basename(f_name))
+
+          result_payload = {
+              "found": bool(resolved_key),
+              "key_path": resolved_key or "",
+              "alias": resolved_alias or "androidkey",
+              "password": resolved_pass or "android",
+              "store_files": list(store_files)
+          }
+
+          with open("signing_resolved.json", "w", encoding="utf-8") as out:
+              json.dump(result_payload, out, indent=2)
+          EOF
+
+          python3 resolve_keystore.py "$BUILD_ID" "$CUSTOM_PASS"
+          rm -f resolve_keystore.py
+
           TARGET_KS="$GITHUB_WORKSPACE/universal.keystore"
           rm -f "$TARGET_KS"
 
-          FOUND_KS=""
-          for candidate in $(find "$GITHUB_WORKSPACE/uploads" -maxdepth 2 -type f \( -name "*.keystore" -o -name "*.jks" \) 2>/dev/null); do
-            FILE_SIZE=$(wc -c < "$candidate" 2>/dev/null || echo 0)
-            if [ "$FILE_SIZE" -gt 1000 ]; then
-              FOUND_KS="$candidate"
-              break
-            fi
-          done
+          FOUND=$(python3 -c "import json; print(json.load(open('signing_resolved.json'))['found'])")
+          TARGET_ALIAS=$(python3 -c "import json; print(json.load(open('signing_resolved.json'))['alias'])")
+          TARGET_PASS=$(python3 -c "import json; print(json.load(open('signing_resolved.json'))['password'])")
+          FOUND_PATH=$(python3 -c "import json; print(json.load(open('signing_resolved.json'))['key_path'])")
 
-          IS_VALID_KEY=false
-          if [ -n "$FOUND_KS" ]; then
-            echo "🔑 تم العثور على مفتاح مرفوع مكتمل الحجم: $FOUND_KS"
-            cp -f "$FOUND_KS" "$TARGET_KS"
-            if keytool -list -keystore "$TARGET_KS" -storepass "android" >/dev/null 2>&1; then
-              echo "✅ المفتاح المرفوع سليم ومطابق."
-              IS_VALID_KEY=true
-            else
-              rm -f "$TARGET_KS"
-            fi
-          fi
-
-          if [ "$IS_VALID_KEY" = false ]; then
-            echo "✨ جاري توليد مفتاح توقيع جديد وموثق 100%..."
+          if [ "$FOUND" = "True" ] && [ -f "$FOUND_PATH" ]; then
+            echo "📦 اعتماد المفتاح المرفوع والمتحقق منه: $FOUND_PATH"
+            cp -f "$FOUND_PATH" "$TARGET_KS"
+          else
+            echo "✨ لم يتم العثور على مفتاح مرفوع متوافق، جاري توليد مفتاح قياسي بصيغة PKCS12..."
+            TARGET_ALIAS="androidkey"
+            TARGET_PASS="android"
             keytool -genkeypair -v -keystore "$TARGET_KS" \
-              -alias androidkey \
+              -alias "$TARGET_ALIAS" \
               -keyalg RSA \
               -keysize 2048 \
               -validity 10000 \
-              -storetype PKCS12 \
-              -storepass "android" \
-              -keypass "android" \
+              -storepass "$TARGET_PASS" \
+              -keypass "$TARGET_PASS" \
+              -deststoretype PKCS12 \
               -dname "CN=Android Secure, O=Android, C=US"
           fi
 
-          # 🔑 2. إزالة اشتراطات التوقيع الداخلية من Gradle للسماح ببناء الـ APK بدون توقف
-          cat << 'EOF' > strip_signing.py
-          import os, re
-
-          for root, dirs, files in os.walk("."):
-              if "build" in dirs:
-                  dirs.remove("build")
-              for file in files:
-                  p = os.path.join(root, file)
-                  if file in ["build.gradle.kts", "build.gradle"]:
-                      with open(p, "r", encoding="utf-8", errors="ignore") as f:
-                          c = f.read()
-                      # إزالة تعيين signingConfig داخل كتل الـ release
-                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.[a-zA-Z0-9_\(\)"\']+', '', c)
-                      c = re.sub(r'signingConfig\s+signingConfigs\.[a-zA-Z0-9_]+', '', c)
-                      with open(p, "w", encoding="utf-8") as f:
-                          f.write(c)
-          EOF
-          python3 strip_signing.py
-          rm strip_signing.py
+          # 🔑 2. نشر المفتاح لكافة المسارات المتوقعة في المشروع
+          python3 -c "
+          import json, os, shutil
+          info = json.load(open('signing_resolved.json'))
+          src_ks = '$TARGET_KS'
+          target_dirs = ['.', 'app', '$ROOT_DIR', '$ROOT_DIR/app']
+          for d in target_dirs:
+              if os.path.exists(d):
+                  for f_name in info['store_files']:
+                      shutil.copyfile(src_ks, os.path.join(d, f_name))
+          "
+          rm -f signing_resolved.json
 
           # تنظيف وقائي لمجلدات الموارد
-          find "$GITHUB_WORKSPACE/project_dir" -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" \) -exec rm -f {} + 2>/dev/null || true
+          find "$GITHUB_WORKSPACE/project_dir" -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" -o -name "*.p12" \) -exec rm -f {} + 2>/dev/null || true
 
           chmod +x ./gradlew
           BUILD_TYPE="${{ github.event.client_payload.build_type }}"
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
-          # 🔑 3. تجميع نسخة الـ Release بنجاح
+          # 🔑 3. تجميع حزمة الإنتاج
           if [ "$BUILD_TYPE" == "aab" ]; then
             echo "🚀 بدء تجميع حزمة الإنتاج AAB (bundleRelease)..."
             ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon
@@ -424,25 +501,31 @@ jobs:
 
           echo "=========================================="
           echo "🔑 بصمات التوقيع المعتمدة لهذا الإصدار:"
-          keytool -list -v -keystore "$TARGET_KS" -alias androidkey -storepass "android" 2>/dev/null | grep -E "Alias name|SHA1:|SHA256:" || true
+          keytool -list -v -keystore "$TARGET_KS" -alias "$TARGET_ALIAS" -storepass "$TARGET_PASS" 2>/dev/null | grep -E "Alias name|SHA1:|SHA256:" || true
           echo "=========================================="
 
-          # 🔑 4. التوقيع الرسمي المباشر بـ apksigner (V1, V2, V3)
+          # 🔑 4. التوقيع النهائي عبر apksigner لضمان V1, V2, V3
           if [ "$BUILD_TYPE" != "aab" ]; then
             BUILD_TOOLS_DIR=$(find /usr/local/lib/android/sdk/build-tools -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
             
             if [ -n "$BUILD_TOOLS_DIR" ] && [ -f "$BUILD_TOOLS_DIR/apksigner" ]; then
               echo "✍️ توقيع حزمة الـ Release رسمياً عبر apksigner (V1, V2, V3)..."
               "$BUILD_TOOLS_DIR/zipalign" -p -f -v 4 "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME" || cp "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME"
-              "$BUILD_TOOLS_DIR/apksigner" sign --ks "$TARGET_KS" --ks-key-alias androidkey --ks-pass pass:android --key-pass pass:android --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true "$GITHUB_WORKSPACE/$FINAL_NAME"
+              "$BUILD_TOOLS_DIR/apksigner" sign --ks "$TARGET_KS" --ks-key-alias "$TARGET_ALIAS" --ks-pass "pass:$TARGET_PASS" --key-pass "pass:$TARGET_PASS" --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true "$GITHUB_WORKSPACE/$FINAL_NAME"
               "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$GITHUB_WORKSPACE/$FINAL_NAME"
             else
               cp "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME"
             fi
           fi
 
-          echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
-          echo "KEYSTORE_ASSET=$TARGET_KS" >> $GITHUB_ENV
+          # التحقق الصارم من وجود الملفات قبل التصدير
+          if [ -f "$GITHUB_WORKSPACE/$FINAL_NAME" ]; then
+            echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
+          fi
+
+          if [ -f "$TARGET_KS" ]; then
+            echo "KEYSTORE_ASSET=$TARGET_KS" >> $GITHUB_ENV
+          fi
 
       - name: Extract Exact Failure Cause
         if: failure()
@@ -465,7 +548,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # خطوة تنظيف المستودع الفورية للحفاظ على النظافة التامة
       - name: Force Clean Uploads Content Cleanly
         if: always()
         run: |
@@ -475,7 +557,7 @@ jobs:
           git checkout main 2>/dev/null || git checkout master 2>/dev/null || true
           git reset --hard origin/HEAD 2>/dev/null || true
           if [ -d "uploads" ]; then find uploads -type f -not -name ".gitkeep" -exec git rm -f {} + 2>/dev/null || true; fi
-          find . -maxdepth 1 -type f \( -name "*.zip" -o -name "*.png" -o -name "*.keystore" -o -name "*.jks" \) -exec git rm -f {} + 2>/dev/null || true
+          find . -maxdepth 1 -type f \( -name "*.zip" -o -name "*.png" -o -name "*.keystore" -o -name "*.jks" -o -name "*.p12" \) -exec git rm -f {} + 2>/dev/null || true
           mkdir -p uploads && touch uploads/.gitkeep && git add uploads/.gitkeep 2>/dev/null || true
           if ! git diff --cached --quiet; then
             git commit -m "Auto-clean uploads [skip ci]"
