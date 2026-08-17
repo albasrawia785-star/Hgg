@@ -396,14 +396,14 @@ jobs:
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
-          # 🔑 3. تجميع الحزمة وتجاوز مهام التحقق الداخلية
+          # 🔑 3. تجميع الحزمة بشكل قياسي وسلس
           if [ "$BUILD_TYPE" == "aab" ]; then
-            ./gradlew clean bundleRelease -x lintVitalRelease -x lint -x validateSigningRelease -x validateSigningDebug --no-daemon
+            ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.aab"
             cp "$OUT_FILE" "$GITHUB_WORKSPACE/$FINAL_NAME"
           else
-            ./gradlew clean assembleRelease -x lintVitalRelease -x lint -x validateSigningRelease -x validateSigningDebug --no-daemon || ./gradlew assembleDebug -x lintVitalRelease -x lint -x validateSigningRelease -x validateSigningDebug --no-daemon
+            ./gradlew clean assembleRelease -x lintVitalRelease -x lint --no-daemon || ./gradlew clean assembleDebug -x lintVitalRelease -x lint --no-daemon
             RAW_APK=$(find . -path "*/build/outputs/apk/*/*.apk" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.apk"
           fi
