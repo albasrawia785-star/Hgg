@@ -379,12 +379,25 @@ jobs:
               -dname "CN=Android Secure, O=Android, C=US"
           fi
 
-          # 🔑 2. نشر المفتاح المعتمد بجميع الأسماء الشائعة لتفادي أي خطأ Keystore not found
+          # 🔑 2. إنشاء مفتاح debug.keystore القياسي المعتمد لأندرويد مع الاسم المستعار androiddebugkey
+          mkdir -p ~/.android
+          DEBUG_KS="$HOME/.android/debug.keystore"
+          rm -f "$DEBUG_KS"
+          keytool -genkeypair -v -keystore "$DEBUG_KS" \
+            -alias androiddebugkey \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass "android" \
+            -keypass "android" \
+            -dname "CN=Android Debug, O=Android, C=US"
+
+          # توزيع مفتاح الـ debug في كافة مسارات المشروع لضمان العثور عليه
           for t_dir in "." "app" "$ROOT_DIR" "$ROOT_DIR/app"; do
             if [ -d "$t_dir" ]; then
-              for k_name in "debug.keystore" "universal.keystore" "release.keystore" "upload.keystore" "key.jks"; do
-                cp -f "$TARGET_KS" "$t_dir/$k_name" 2>/dev/null || true
-              done
+              cp -f "$DEBUG_KS" "$t_dir/debug.keystore" 2>/dev/null || true
+              cp -f "$TARGET_KS" "$t_dir/universal.keystore" 2>/dev/null || true
+              cp -f "$TARGET_KS" "$t_dir/release.keystore" 2>/dev/null || true
             fi
           done
 
@@ -396,7 +409,7 @@ jobs:
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
-          # 🔑 3. تجميع الحزمة بشكل قياسي وسلس
+          # 🔑 3. تجميع الحزمة
           if [ "$BUILD_TYPE" == "aab" ]; then
             ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
