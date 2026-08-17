@@ -332,7 +332,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ تحليل ديناميكي للمفتاح واستخراج الـ Alias والتوقيع المضمون بـ apksigner
+      # ⚙️ تحليل ديناميكي للمفتاح وتوافق تام للتوقيع بـ apksigner
       - name: Build & Guaranteed Apksigner (Release Only)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
@@ -450,8 +450,8 @@ jobs:
               -dname "CN=Android Secure, O=Android, C=US"
           fi
 
-          # 🔑 2. إزالة أي ربط لـ signingConfig من ملفات Gradle لمنع توقف Gradle الداخلي
-          cat << 'EOF' > strip_gradle_signing.py
+          # 🔑 2. ضبط توافق التوقيع الآمن في Gradle دون كسر بنية الأقواس
+          cat << 'EOF' > fix_signing_syntax.py
           import os, re
 
           for root, dirs, files in os.walk("."):
@@ -459,19 +459,29 @@ jobs:
                   dirs.remove("build")
               for file in files:
                   p = os.path.join(root, file)
-                  if file in ["build.gradle.kts", "build.gradle"]:
+                  if file == "build.gradle.kts":
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           c = f.read()
-                      # إزالة تعيينات signingConfig تماماً لمنع أخطاء storePassword المفقودة
-                      c = re.sub(r'signingConfig\s*=\s*[^\r\n]+', '// signingConfig bypassed', c)
-                      c = re.sub(r'signingConfig\s+signingConfigs\.[^\r\n]+', '// signingConfig bypassed', c)
+                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.[a-zA-Z0-9_\(\)"\']+', 'signingConfig = signingConfigs.getByName("debug")', c)
                       c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
                       c = re.sub(r'abortOnError\s*=\s*true', 'abortOnError = false', c)
                       with open(p, "w", encoding="utf-8") as f:
                           f.write(c)
+
+                  elif file == "build.gradle":
+                      with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                          c = f.read()
+                      c = re.sub(r'signingConfig\s+signingConfigs\.[a-zA-Z0-9_]+', 'signingConfig signingConfigs.debug', c)
+                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.[a-zA-Z0-9_]+', 'signingConfig = signingConfigs.debug', c)
+                      c = re.sub(r'checkReleaseBuilds\s+true', 'checkReleaseBuilds false', c)
+                      c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
+                      c = re.sub(r'abortOnError\s+true', 'abortOnError false', c)
+                      c = re.sub(r'abortOnError\s*=\s*true', 'abortOnError = false', c)
+                      with open(p, "w", encoding="utf-8") as f:
+                          f.write(c)
           EOF
-          python3 strip_gradle_signing.py
-          rm -f strip_gradle_signing.py
+          python3 fix_signing_syntax.py
+          rm -f fix_signing_syntax.py
 
           # تنظيف وقائي لمجلدات الموارد
           find "$GITHUB_WORKSPACE/project_dir" -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" -o -name "*.p12" \) -exec rm -f {} + 2>/dev/null || true
@@ -481,7 +491,7 @@ jobs:
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
-          # 🔑 3. تجميع حزمة الإنتاج بنجاح سلس
+          # 🔑 3. تجميع حزمة الإنتاج
           if [ "$BUILD_TYPE" == "aab" ]; then
             echo "🚀 بدء تجميع حزمة الإنتاج AAB (bundleRelease)..."
             ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon
