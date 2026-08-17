@@ -305,18 +305,16 @@ jobs:
           python3 universal_hardener.py
           rm universal_hardener.py
 
-      - name: Setup Gradle 9.3.1 & Disable Unstable Caching
+      - name: Setup Gradle 8.11.1 (Rock-Solid Stable)
         run: |
           SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
           cd "$ROOT_DIR"
-          gradle wrapper --gradle-version 9.3.1 --distribution-type bin || true
+          gradle wrapper --gradle-version 8.11.1 --distribution-type bin || true
           chmod +x ./gradlew
           echo "android.suppressUnsupportedCompileSdk=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
           echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m" >> gradle.properties
-          echo "org.gradle.configuration-cache=false" >> gradle.properties
-          echo "org.gradle.caching=false" >> gradle.properties
         continue-on-error: true
 
       - name: Replace Custom App Icon Cleanly
@@ -334,7 +332,7 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ تجميع المشروع النظيف وتوقيعه بمفتاح موثوق
+      # ⚙️ تجميع المشروع والتوقيع الذكي بمفتاح مضمون
       - name: Build & Guaranteed Apksigner (V1, V2, V3 Signing)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
@@ -381,14 +379,14 @@ jobs:
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
-          # 2. تنفيذ التجميع النظيف مع تعطيل الكاش غير المستقر
+          # 2. تنفيذ التجميع المستقر
           if [ "$BUILD_TYPE" == "aab" ]; then
-            ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon --no-configuration-cache --no-build-cache --stacktrace
+            ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.aab"
             cp "$OUT_FILE" "$GITHUB_WORKSPACE/$FINAL_NAME"
           else
-            ./gradlew clean assembleRelease -x lintVitalRelease -x lint --no-daemon --no-configuration-cache --no-build-cache --stacktrace || ./gradlew assembleDebug --no-daemon --no-configuration-cache --no-build-cache --stacktrace
+            ./gradlew clean assembleRelease -x lintVitalRelease -x lint --no-daemon || ./gradlew assembleDebug --no-daemon
             RAW_APK=$(find . -path "*/build/outputs/apk/*/*.apk" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.apk"
           fi
