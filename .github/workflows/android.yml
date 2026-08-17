@@ -149,11 +149,11 @@ jobs:
           fi
         continue-on-error: true
 
-      # 🛡️ المحرك الشامل لتحصين وتشفير أي تطبيق
-      - name: Universal Dynamic Obfuscation & Security Engine
+      # 🛡️ تشفير البيانات الحساسة وقواعد التحصين المتوافقة مع أجهزة أندرويد
+      - name: Universal Obfuscation & Security Hardening
         run: |
           echo "================================================================="
-          echo "🛡️ تفعيل المحرك الشامل للتحصين والتشفير الديناميكي..."
+          echo "🛡️ تفعيل منظومة التحصين والتشفير..."
           echo "================================================================="
 
           cat << 'EOF' > universal_hardener.py
@@ -168,7 +168,7 @@ jobs:
 
           secured_count = 0
 
-          # 1. تحصين ملفات المانيفست في المشروع بالكامل
+          # 1. تحصين المانيفست القياسي
           for root, _, files in os.walk("project_dir"):
               for file in files:
                   if file == "AndroidManifest.xml":
@@ -181,7 +181,7 @@ jobs:
                       with open(p, "w", encoding="utf-8") as f:
                           f.write(m)
 
-          # 2. كشف الحزمة الجذرية الأساسية للمشروع
+          # 2. استخراج الحزمة الأصلية
           root_package = "com.universal.security"
           for root, dirs, files in os.walk("project_dir"):
               for file in files:
@@ -200,15 +200,7 @@ jobs:
 
           vault_class_code = f"""package {root_package}
 
-          import android.os.Process
-          import java.io.BufferedReader
-          import java.io.FileReader
-
           object AppSecurityVault {{
-
-              init {{
-                  protectProcess()
-              }}
 
               @JvmStatic
               fun decrypt(b: ByteArray, k: Int): String {{
@@ -218,28 +210,10 @@ jobs:
                   }}
                   return String(r, Charsets.UTF_8)
               }}
-
-              private fun protectProcess() {{
-                  try {{
-                      val reader = BufferedReader(FileReader("/proc/self/status"))
-                      var line: String?
-                      while (reader.readLine().also {{ line = it }} != null) {{
-                          if (line!!.startsWith("TracerPid:")) {{
-                              val pid = line!!.substring(10).trim().toInt()
-                              if (pid != 0) {{
-                                  reader.close()
-                                  Process.killProcess(Process.myPid())
-                                  System.exit(0)
-                              }}
-                          }}
-                      }}
-                      reader.close()
-                  }} catch (ignored: Exception) {{}}
-              }}
           }}
           """
 
-          # 3. حقن AppSecurityVault داخل مجلدات السورس كود تلقائياً
+          # 3. حقن AppSecurityVault داخل السورس كود
           injected = False
           pkg_subpath = root_package.replace('.', os.sep)
           for root, dirs, files in os.walk("project_dir"):
@@ -259,7 +233,7 @@ jobs:
                           vf.write(vault_class_code)
                       break
 
-          # 4. التشفير الشامل للمتغيرات الحساسة
+          # 4. تشفير الأسرار والحقول الحساسة
           secret_var_pattern = r'(const\s+val|val|var)\s+([a-zA-Z0-9_]*(?:PASSWORD|PASSWD|PASS|SECRET|TOKEN|API_KEY|KEY|ADMIN|AUTH|PHONE|USERNAME|USER|CREDENTIAL|PIN|RESTAURANT|SHOP|DATABASE)[a-zA-Z0-9_]*)\s*(?::\s*String)?\s*=\s*"([^"$\r\n\\]+)"'
 
           for root, dirs, files in os.walk("project_dir"):
@@ -298,11 +272,9 @@ jobs:
                           with open(p, "w", encoding="utf-8") as f:
                               f.write(new_content)
 
-          # 5. قواعد R8 الشاملة والمتوافقة
+          # 5. قواعد R8 المتوافقة
           r8_rules = f"""
           -keep class {root_package}.AppSecurityVault {{ *; }}
-          -repackageclasses ''
-          -allowaccessmodification
           -dontwarn **
           -dontwarn androidx.**
           -keepclassmembers class * extends androidx.room.RoomDatabase {{ *; }}
@@ -327,7 +299,7 @@ jobs:
                   with open(p_file, "a", encoding="utf-8") as f:
                       f.write(r8_rules)
 
-          print(f"🔒 تم تحصين المشروع بنجاح وتشفير {secured_count} حقل حساس عبر الحزمة: {root_package}")
+          print(f"🔒 تم تحصين المشروع وتشفير {secured_count} حقل حساس بنجاح.")
           EOF
 
           python3 universal_hardener.py
@@ -368,72 +340,19 @@ jobs:
           fi
         continue-on-error: true
 
-      # ⚙️ إدارة وتوليد مفتاح التوقيع بصيغة PKCS12 المعتمدة وبناء الحزمة
+      # ⚙️ تجميع المشروع وتوليد مفتاح حقيقي 100% والتوقيع بـ Apksigner
       - name: Build & Guaranteed Apksigner (V1, V2, V3 Signing)
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
         run: |
           SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
           ROOT_DIR=$(dirname "$SETTINGS_FILE")
-
-          # 🔑 1. تجهيز المفتاح في المسار المطلق الرئيسي أولاً
-          KEY_PATH="$GITHUB_WORKSPACE/universal.keystore"
-          rm -f "$KEY_PATH"
-
-          FOUND_KS=""
-          for candidate in $(find "$GITHUB_WORKSPACE/uploads" "$GITHUB_WORKSPACE/project_dir" -maxdepth 3 -type f \( -name "*.keystore" -o -name "*.jks" \) 2>/dev/null); do
-            if [ -s "$candidate" ]; then
-              FOUND_KS="$candidate"
-              break
-            fi
-          done
-
-          if [ -n "$FOUND_KS" ]; then
-            echo "🔑 تم العثور على مفتاح توقيع مخصص سليم: $FOUND_KS"
-            cp -f "$FOUND_KS" "$KEY_PATH"
-          else
-            echo "✨ جاري توليد مفتاح توقيع موثق بصيغة PKCS12 القياسية..."
-            keytool -genkeypair -v -keystore "$KEY_PATH" \
-              -alias androidkey \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -storetype PKCS12 \
-              -storepass "android" \
-              -keypass "android" \
-              -dname "CN=Android Secure, O=Android, C=US"
-          fi
-
-          # التحقق من أن حجم الملف أكبر من الصفر
-          if [ ! -s "$KEY_PATH" ]; then
-            echo "⚠️ إعادة توليد المفتاح للتأكد من اكتمال حجمه..."
-            rm -f "$KEY_PATH"
-            keytool -genkeypair -v -keystore "$KEY_PATH" \
-              -alias androidkey \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -storetype PKCS12 \
-              -storepass "android" \
-              -keypass "android" \
-              -dname "CN=Android Secure, O=Android, C=US"
-          fi
-
-          # 🔑 2. توزيع المفتاح إلى كافة المجلدات
-          for target_dir in "$ROOT_DIR" "$ROOT_DIR/app" "$GITHUB_WORKSPACE/project_dir" "$GITHUB_WORKSPACE/project_dir/app"; do
-            if [ -d "$target_dir" ]; then
-              for k_name in "universal.keystore" "my-upload-key.jks" "release.keystore" "debug.keystore" "upload-keystore.jks" "key.jks" "keystore.jks" "my-release-key.jks"; do
-                cp -f "$KEY_PATH" "$target_dir/$k_name" 2>/dev/null || true
-              done
-            fi
-          done
-
-          # 🧹 تنظيف وقائي لحذف أي مفاتيح تسربت لمجلدات الموارد res
-          find "$GITHUB_WORKSPACE/project_dir" -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" \) -exec rm -f {} + 2>/dev/null || true
-
           cd "$ROOT_DIR"
 
-          # 🔑 3. حقن التوقيع المتوافق نحوياً
+          # 🧹 تنظيف وقائي لحذف أي ملفات keystore داخل مجلدات الموارد
+          find . -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" \) -exec rm -f {} + 2>/dev/null || true
+
+          # 1. تهيئة ملفات الـ build.gradle للتعامل مع التجميع
           cat << 'EOF' > fix_signing.py
           import os, re
 
@@ -445,7 +364,7 @@ jobs:
                   if file == "build.gradle.kts":
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           c = f.read()
-                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.[a-zA-Z0-9_\(\)"\']+', 'signingConfig = signingConfigs.getByName("debug")', c)
+                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.[a-zA-Z0-9_\(\)"\']+', '', c)
                       c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
                       c = re.sub(r'abortOnError\s*=\s*true', 'abortOnError = false', c)
                       with open(p, "w", encoding="utf-8") as f:
@@ -454,8 +373,8 @@ jobs:
                   elif file == "build.gradle":
                       with open(p, "r", encoding="utf-8", errors="ignore") as f:
                           c = f.read()
-                      c = re.sub(r'signingConfig\s+signingConfigs\.[a-zA-Z0-9_]+', 'signingConfig signingConfigs.debug', c)
-                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.[a-zA-Z0-9_]+', 'signingConfig = signingConfigs.debug', c)
+                      c = re.sub(r'signingConfig\s+signingConfigs\.[a-zA-Z0-9_]+', '', c)
+                      c = re.sub(r'signingConfig\s*=\s*signingConfigs\.[a-zA-Z0-9_]+', '', c)
                       c = re.sub(r'checkReleaseBuilds\s+true', 'checkReleaseBuilds false', c)
                       c = re.sub(r'checkReleaseBuilds\s*=\s*true', 'checkReleaseBuilds = false', c)
                       c = re.sub(r'abortOnError\s+true', 'abortOnError false', c)
@@ -471,7 +390,7 @@ jobs:
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
 
-          # 🔑 4. تنفيذ التجميع
+          # 2. تنفيذ التجميع أولاً
           if [ "$BUILD_TYPE" == "aab" ]; then
             ./gradlew clean bundleRelease -x lintVitalRelease -x lint --no-daemon
             OUT_FILE=$(find . -path "*/build/outputs/bundle/*/*.aab" | head -n 1)
@@ -481,22 +400,62 @@ jobs:
             ./gradlew clean assembleRelease -x lintVitalRelease -x lint --no-daemon
             RAW_APK=$(find . -path "*/build/outputs/apk/*/*.apk" | head -n 1)
             FINAL_NAME="${PROJECT_NAME}.apk"
-            
+          fi
+
+          # 3. تجهيز والتحقق الصارم من المفتاح الحقيقي (بعد انتهاء gradle لضمان عدم تلفه)
+          TARGET_KS="$GITHUB_WORKSPACE/universal.keystore"
+          rm -f "$TARGET_KS"
+
+          FOUND_KS=""
+          for candidate in $(find "$GITHUB_WORKSPACE/uploads" -maxdepth 2 -type f \( -name "*.keystore" -o -name "*.jks" \) 2>/dev/null); do
+            if [ -s "$candidate" ]; then
+              FOUND_KS="$candidate"
+              break
+            fi
+          done
+
+          if [ -n "$FOUND_KS" ]; then
+            echo "🔑 تم العثور على مفتاح توقيع مخصص من المستخدم: $FOUND_KS"
+            cp -f "$FOUND_KS" "$TARGET_KS"
+          else
+            echo "✨ جاري توليد مفتاح توقيع جديد وموثق 100%..."
+            keytool -genkeypair -v -keystore "$TARGET_KS" \
+              -alias androidkey \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "android" \
+              -keypass "android" \
+              -dname "CN=Android Secure, O=Android, C=US"
+          fi
+
+          # 🛡️ الفحص الأمني الذاتي للمفتاح والتأكد من قراءة بصماته بنجاح
+          echo "=========================================="
+          echo "🔍 جاري فحص والتحقق من صحة المفتاح:"
+          keytool -list -v -keystore "$TARGET_KS" -alias androidkey -storepass "android"
+          if [ $? -ne 0 ]; then
+            echo "❌ خطأ: المفتاح غير سليم أو تالف!"
+            exit 1
+          fi
+          echo "✅ تم تأكيد صحة المفتاح وبصماته بنجاح."
+          echo "=========================================="
+
+          # 4. التوقيع الرسمي المباشر بـ apksigner
+          if [ "$BUILD_TYPE" != "aab" ]; then
             BUILD_TOOLS_DIR=$(find /usr/local/lib/android/sdk/build-tools -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
             
-            # توقيع الحزمة رسمياً بـ apksigner مع التوافق التام لـ PKCS12
             if [ -n "$BUILD_TOOLS_DIR" ] && [ -f "$BUILD_TOOLS_DIR/apksigner" ]; then
-              echo "✍️ توقيع الحزمة رسمياً عبر apksigner (V1, V2, V3)..."
+              echo "✍️ توقيع الحزمة رسمياً عبر apksigner..."
               "$BUILD_TOOLS_DIR/zipalign" -p -f -v 4 "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME" || cp "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME"
-              "$BUILD_TOOLS_DIR/apksigner" sign --ks "$KEY_PATH" --ks-key-alias androidkey --ks-pass pass:android --key-pass pass:android --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true "$GITHUB_WORKSPACE/$FINAL_NAME"
-              "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$GITHUB_WORKSPACE/$FINAL_NAME" || true
+              "$BUILD_TOOLS_DIR/apksigner" sign --ks "$TARGET_KS" --ks-key-alias androidkey --ks-pass pass:android --key-pass pass:android --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true "$GITHUB_WORKSPACE/$FINAL_NAME"
+              "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$GITHUB_WORKSPACE/$FINAL_NAME"
             else
               cp "$RAW_APK" "$GITHUB_WORKSPACE/$FINAL_NAME"
             fi
           fi
 
           echo "FINAL_ASSET=$GITHUB_WORKSPACE/$FINAL_NAME" >> $GITHUB_ENV
-          echo "KEYSTORE_ASSET=$KEY_PATH" >> $GITHUB_ENV
+          echo "KEYSTORE_ASSET=$TARGET_KS" >> $GITHUB_ENV
 
       - name: Extract Exact Failure Cause
         if: failure()
