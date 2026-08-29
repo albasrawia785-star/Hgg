@@ -45,15 +45,36 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
-      # ⚙️ إصلاح وتأكيد استيراد Compose Border في حال غيابه
-      - name: Fix Missing Imports Automatically
+      # ⚙️ إصلاح وتأكيد استيراد Compose Border بشكل آمن دون كسر سطر الـ package
+      - name: Fix Missing Imports Safely
         run: |
-          find project_dir -type f -name "*.kt" | while read -r kt_file; do
-            if grep -q "\.border(" "$kt_file" && ! grep -q "import androidx.compose.foundation.border" "$kt_file"; then
-              echo "🛠️ إضافة استيراد border إلى $kt_file"
-              sed -i '1s/^/import androidx.compose.foundation.border\n/' "$kt_file"
-            fi
-          done
+          cat << 'EOF' > fix_imports.py
+          import os, re
+
+          for root, _, files in os.walk("project_dir"):
+              for file in files:
+                  if file.endswith(".kt"):
+                      p = os.path.join(root, file)
+                      with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                          content = f.read()
+
+                      if ".border(" in content and "import androidx.compose.foundation.border" not in content:
+                          print(f"🛠️ إضافة استيراد border لـ {file}")
+                          lines = content.splitlines()
+                          pkg_idx = -1
+                          for i, l in enumerate(lines):
+                              if l.strip().startswith("package "):
+                                  pkg_idx = i
+                                  break
+                          
+                          if pkg_idx != -1:
+                              lines.insert(pkg_idx + 1, "import androidx.compose.foundation.border")
+                              new_content = "\n".join(lines)
+                              with open(p, "w", encoding="utf-8") as f:
+                                  f.write(new_content)
+          EOF
+          python3 fix_imports.py
+          rm fix_imports.py
 
       - name: Auto-Sync Package Name & Google Services
         run: |
