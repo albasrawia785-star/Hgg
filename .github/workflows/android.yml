@@ -45,6 +45,16 @@ jobs:
           mkdir -p project_dir
           unzip -o "$ZIP_FILE" -d project_dir
 
+          # البحث عن ملف gradlew داخل المجلد المستخرج وضمان وجود نسخته في project_dir مباشرة
+          GRADLEW_FOUND=$(find project_dir -name "gradlew" | head -n 1)
+          if [ -n "$GRADLEW_FOUND" ]; then
+            GRADLEW_DIR=$(dirname "$GRADLEW_FOUND")
+            if [ "$GRADLEW_DIR" != "project_dir" ]; then
+              cp -rn "$GRADLEW_DIR"/* project_dir/ 2>/dev/null || true
+            fi
+            chmod +x project_dir/gradlew
+          fi
+
       # ⚙️ إصلاح وتأكيد استيراد Compose Border بشكل آمن دون كسر سطر الـ package
       - name: Fix Missing Imports Safely
         run: |
@@ -333,14 +343,26 @@ jobs:
       - name: Setup Gradle 9.3.1
         run: |
           SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
-          ROOT_DIR=$(dirname "$SETTINGS_FILE")
-          cd "$ROOT_DIR"
-          gradle wrapper --gradle-version 9.3.1 --distribution-type bin || true
-          chmod +x ./gradlew
-          echo "android.suppressUnsupportedCompileSdk=true" >> gradle.properties
-          echo "android.enableJetifier=true" >> gradle.properties
-          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true" >> gradle.properties
-          echo "ksp.incremental=false" >> gradle.properties
+          if [ -n "$SETTINGS_FILE" ]; then
+            ROOT_DIR=$(dirname "$SETTINGS_FILE")
+          else
+            ROOT_DIR="project_dir"
+          fi
+          
+          if [ ! -f "$ROOT_DIR/gradlew" ]; then
+            gradle wrapper --gradle-version 9.3.1 --distribution-type bin --p "$ROOT_DIR" || gradle wrapper --gradle-version 9.3.1 --distribution-type bin || true
+          else
+            (cd "$ROOT_DIR" && ./gradlew wrapper --gradle-version 9.3.1 --distribution-type bin || true)
+          fi
+
+          if [ -f "$ROOT_DIR/gradlew" ]; then
+            chmod +x "$ROOT_DIR/gradlew"
+          fi
+
+          echo "android.suppressUnsupportedCompileSdk=true" >> "$ROOT_DIR/gradle.properties"
+          echo "android.enableJetifier=true" >> "$ROOT_DIR/gradle.properties"
+          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true" >> "$ROOT_DIR/gradle.properties"
+          echo "ksp.incremental=false" >> "$ROOT_DIR/gradle.properties"
         continue-on-error: true
 
       - name: Replace Custom App Icon Cleanly
@@ -363,7 +385,11 @@ jobs:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
         run: |
           SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
-          ROOT_DIR=$(dirname "$SETTINGS_FILE")
+          if [ -n "$SETTINGS_FILE" ]; then
+            ROOT_DIR=$(dirname "$SETTINGS_FILE")
+          else
+            ROOT_DIR="project_dir"
+          fi
           cd "$ROOT_DIR"
 
           BUILD_ID="${{ github.event.client_payload.build_id }}"
@@ -504,7 +530,12 @@ jobs:
 
           find "$GITHUB_WORKSPACE/project_dir" -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" -o -name "*.p12" \) -exec rm -f {} + 2>/dev/null || true
 
+          # ضمان وجود gradlew ومنحه صلاحية التنفيذ حتى لو لم ينشأ سابقاً
+          if [ ! -f "./gradlew" ]; then
+            gradle wrapper --distribution-type bin || true
+          fi
           chmod +x ./gradlew
+
           BUILD_TYPE="${{ github.event.client_payload.build_type }}"
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
