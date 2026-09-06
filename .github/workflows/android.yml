@@ -26,7 +26,7 @@ jobs:
           java-version: '17'
           distribution: 'zulu'
 
-      - name: Locate and Extract Project
+      - name: Locate, Extract, and Normalize Project Structure
         run: |
           BUILD_ID="${{ github.event.client_payload.build_id }}"
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
@@ -42,20 +42,36 @@ jobs:
             exit 1
           fi
 
-          mkdir -p project_dir
-          unzip -o "$ZIP_FILE" -d project_dir
+          mkdir -p extracted_tmp
+          unzip -o "$ZIP_FILE" -d extracted_tmp
 
-          # البحث عن ملف gradlew داخل المجلد المستخرج وضمان وجود نسخته في project_dir مباشرة
-          GRADLEW_FOUND=$(find project_dir -name "gradlew" | head -n 1)
-          if [ -n "$GRADLEW_FOUND" ]; then
-            GRADLEW_DIR=$(dirname "$GRADLEW_FOUND")
-            if [ "$GRADLEW_DIR" != "project_dir" ]; then
-              cp -rn "$GRADLEW_DIR"/* project_dir/ 2>/dev/null || true
-            fi
+          # البحث عن المكان الحقيقي الذي يحتوي على settings.gradle أو build.gradle
+          ROOT_BUILD_FILE=$(find extracted_tmp -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" -o -name "build.gradle" -o -name "build.gradle.kts" \) | head -n 1)
+
+          if [ -z "$ROOT_BUILD_FILE" ]; then
+            echo "Error: No Gradle build files found inside ZIP!"
+            exit 1
+          fi
+
+          REAL_PROJECT_DIR=$(dirname "$ROOT_BUILD_FILE")
+
+          mkdir -p project_dir
+          cp -r "$REAL_PROJECT_DIR"/* project_dir/ 2>/dev/null || cp -r "$REAL_PROJECT_DIR"/.* project_dir/ 2>/dev/null || true
+
+          # إنشاء gradlew wrapper إذا لم يكن موجوداً داخل project_dir
+          if [ ! -f "project_dir/gradlew" ]; then
+            echo "⚠️ gradlew not found in extracted directory, generating new wrapper..."
+            cd project_dir
+            gradle wrapper --gradle-version 8.7 --distribution-type bin || true
+            cd ..
+          fi
+
+          if [ -f "project_dir/gradlew" ]; then
             chmod +x project_dir/gradlew
           fi
 
-      # ⚙️ إصلاح وتأكيد استيراد Compose Border بشكل آمن دون كسر سطر الـ package
+          rm -rf extracted_tmp
+
       - name: Fix Missing Imports Safely
         run: |
           cat << 'EOF' > fix_imports.py
@@ -69,7 +85,6 @@ jobs:
                           content = f.read()
 
                       if ".border(" in content and "import androidx.compose.foundation.border" not in content:
-                          print(f"🛠️ إضافة استيراد border لـ {file}")
                           lines = content.splitlines()
                           pkg_idx = -1
                           for i, l in enumerate(lines):
@@ -190,9 +205,7 @@ jobs:
       - name: Universal Obfuscation & Play Protect Friendly Hardening
         run: |
           cat << 'EOF' > universal_hardener.py
-          import os
-          import re
-          import random
+          import os, re, random
 
           def encode_bytes(text, salt):
               encoded = text.encode('utf-8')
@@ -340,29 +353,18 @@ jobs:
             sed -i -E "s/(shrinkResources\s+)false/\1true/g" "$g_file"
           done
 
-      - name: Setup Gradle 9.3.1
+      - name: Setup Gradle
         run: |
-          SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
-          if [ -n "$SETTINGS_FILE" ]; then
-            ROOT_DIR=$(dirname "$SETTINGS_FILE")
-          else
-            ROOT_DIR="project_dir"
+          cd project_dir
+          if [ ! -f "gradlew" ]; then
+            gradle wrapper --distribution-type bin || true
           fi
-          
-          if [ ! -f "$ROOT_DIR/gradlew" ]; then
-            gradle wrapper --gradle-version 9.3.1 --distribution-type bin --p "$ROOT_DIR" || gradle wrapper --gradle-version 9.3.1 --distribution-type bin || true
-          else
-            (cd "$ROOT_DIR" && ./gradlew wrapper --gradle-version 9.3.1 --distribution-type bin || true)
-          fi
+          chmod +x gradlew
 
-          if [ -f "$ROOT_DIR/gradlew" ]; then
-            chmod +x "$ROOT_DIR/gradlew"
-          fi
-
-          echo "android.suppressUnsupportedCompileSdk=true" >> "$ROOT_DIR/gradle.properties"
-          echo "android.enableJetifier=true" >> "$ROOT_DIR/gradle.properties"
-          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true" >> "$ROOT_DIR/gradle.properties"
-          echo "ksp.incremental=false" >> "$ROOT_DIR/gradle.properties"
+          echo "android.suppressUnsupportedCompileSdk=true" >> gradle.properties
+          echo "android.enableJetifier=true" >> gradle.properties
+          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true" >> gradle.properties
+          echo "ksp.incremental=false" >> gradle.properties
         continue-on-error: true
 
       - name: Replace Custom App Icon Cleanly
@@ -384,13 +386,7 @@ jobs:
         env:
           _JAVA_OPTIONS: "-Xmx4g -Djava.awt.headless=true"
         run: |
-          SETTINGS_FILE=$(find project_dir -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle" | head -n 1)
-          if [ -n "$SETTINGS_FILE" ]; then
-            ROOT_DIR=$(dirname "$SETTINGS_FILE")
-          else
-            ROOT_DIR="project_dir"
-          fi
-          cd "$ROOT_DIR"
+          cd "$GITHUB_WORKSPACE/project_dir"
 
           BUILD_ID="${{ github.event.client_payload.build_id }}"
           CUSTOM_PASS="${{ github.event.client_payload.keystore_password }}"
@@ -528,14 +524,6 @@ jobs:
           python3 fix_signing_syntax.py
           rm -f fix_signing_syntax.py
 
-          find "$GITHUB_WORKSPACE/project_dir" -path "*/src/main/res/*" -type f \( -name "*.jks" -o -name "*.keystore" -o -name "*.p12" \) -exec rm -f {} + 2>/dev/null || true
-
-          # ضمان وجود gradlew ومنحه صلاحية التنفيذ حتى لو لم ينشأ سابقاً
-          if [ ! -f "./gradlew" ]; then
-            gradle wrapper --distribution-type bin || true
-          fi
-          chmod +x ./gradlew
-
           BUILD_TYPE="${{ github.event.client_payload.build_type }}"
           PROJECT_NAME="${{ github.event.client_payload.project_name }}"
           if [ -z "$PROJECT_NAME" ]; then PROJECT_NAME="app"; fi
@@ -570,11 +558,6 @@ jobs:
           if [ -f "$TARGET_KS" ]; then
             echo "KEYSTORE_ASSET=$TARGET_KS" >> $GITHUB_ENV
           fi
-
-      - name: Extract Exact Failure Cause
-        if: failure()
-        run: |
-          find . -name "*.log" -exec grep -Hn -E "\* What went wrong:|Execution failed for task|Compilation error" {} + 2>/dev/null || true
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
